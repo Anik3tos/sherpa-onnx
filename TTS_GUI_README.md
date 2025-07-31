@@ -5,10 +5,12 @@ A user-friendly graphical interface for the sherpa-onnx text-to-speech system, f
 ## Features
 
 - **Two Premium English Models:**
+
   - **Matcha-TTS LJSpeech**: Ultra-high quality single female speaker (American English)
   - **Kokoro English**: Multiple speakers (11 different voices) with excellent quality
 
 - **Easy-to-Use Interface:**
+
   - Simple text input with sample content
   - Model selection (Matcha-TTS or Kokoro)
   - Speaker selection for Kokoro model (0-10)
@@ -32,13 +34,15 @@ A user-friendly graphical interface for the sherpa-onnx text-to-speech system, f
 ## Installation
 
 1. **Install dependencies:**
+
    ```bash
    pip install sherpa-onnx pygame soundfile
    ```
 
 2. **Download the models (already done if you followed the previous steps):**
-   
+
    **Matcha-TTS LJSpeech (High Quality):**
+
    ```bash
    curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/matcha-icefall-en_US-ljspeech.tar.bz2
    tar xf matcha-icefall-en_US-ljspeech.tar.bz2
@@ -46,6 +50,7 @@ A user-friendly graphical interface for the sherpa-onnx text-to-speech system, f
    ```
 
    **Kokoro English (Multiple Speakers):**
+
    ```bash
    curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2
    tar xf kokoro-en-v0_19.tar.bz2
@@ -54,11 +59,13 @@ A user-friendly graphical interface for the sherpa-onnx text-to-speech system, f
 ## Usage
 
 ### Option 1: Python Script
+
 ```bash
 python tts_gui.py
 ```
 
 ### Option 2: Windows Batch File
+
 ```bash
 start_tts_gui.bat
 ```
@@ -66,6 +73,7 @@ start_tts_gui.bat
 ## Model Information
 
 ### Matcha-TTS LJSpeech
+
 - **Quality:** Ultra-high (premium quality)
 - **Speakers:** 1 (female, American English)
 - **Size:** ~73MB + ~51MB vocoder
@@ -73,6 +81,7 @@ start_tts_gui.bat
 - **Best for:** Highest quality single-voice applications
 
 ### Kokoro English v0.19
+
 - **Quality:** High
 - **Speakers:** 11 different voices (IDs 0-10)
 - **Size:** ~304MB
@@ -82,11 +91,13 @@ start_tts_gui.bat
 ## Performance Metrics
 
 **RTF (Real-Time Factor):** Lower is better
+
 - RTF < 1.0: Faster than real-time (can generate audio faster than playback)
 - RTF = 1.0: Real-time generation
 - RTF > 1.0: Slower than real-time
 
 Both models achieve excellent RTF values:
+
 - Matcha-TTS: ~0.03-0.05 RTF (30-50x faster than real-time!)
 - Kokoro: ~0.35-0.40 RTF (2.5-3x faster than real-time)
 
@@ -109,6 +120,7 @@ Both models achieve excellent RTF values:
 - **For slower, clearer speech:** Decrease speed slider below 1.0x
 
 ## File Structure
+
 ```
 sherpa-onnx/
 ├── tts_gui.py                     # Main GUI application
