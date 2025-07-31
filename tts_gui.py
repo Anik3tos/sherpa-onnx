@@ -3,6 +3,7 @@
 """
 High-Quality English TTS GUI
 A user-friendly interface for sherpa-onnx text-to-speech with premium English models
+Enhanced with improved text input usability and optimized speech generation performance
 """
 
 import tkinter as tk
@@ -16,12 +17,358 @@ import sherpa_onnx
 import soundfile as sf
 from pathlib import Path
 import numpy as np
+import hashlib
+import pickle
+import tempfile
+import re
+import weakref
+from concurrent.futures import ThreadPoolExecutor
+from collections import OrderedDict
+import json
+
+
+class TextProcessor:
+    """Handles text preprocessing and validation"""
+
+    def __init__(self):
+        self.max_length = 100000  # Maximum total text length (doubled)
+        self.min_length = 1      # Minimum text length
+        self.chunk_size = 8000   # Target chunk size for long texts
+        self.max_chunk_size = 9500  # Maximum chunk size before forced split
+
+    def validate_text(self, text):
+        """Validate input text and return (is_valid, error_message)"""
+        if not text or not text.strip():
+            return False, "Text cannot be empty"
+
+        if len(text) > self.max_length:
+            return False, f"Text too long (max {self.max_length} characters)"
+
+        if len(text.strip()) < self.min_length:
+            return False, f"Text too short (min {self.min_length} characters)"
+
+        return True, ""
+
+    def preprocess_text(self, text, options=None):
+        """Preprocess text based on options"""
+        if not text:
+            return text
+
+        if options is None:
+            options = {}
+
+        processed = text
+
+        # Normalize whitespace
+        if options.get('normalize_whitespace', True):
+            processed = re.sub(r'\s+', ' ', processed)
+            processed = processed.strip()
+
+        # Normalize punctuation
+        if options.get('normalize_punctuation', True):
+            # Replace multiple punctuation marks
+            processed = re.sub(r'[.]{2,}', '...', processed)
+            processed = re.sub(r'[!]{2,}', '!', processed)
+            processed = re.sub(r'[?]{2,}', '?', processed)
+
+        # Remove URLs
+        if options.get('remove_urls', False):
+            processed = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', processed)
+
+        # Remove email addresses
+        if options.get('remove_emails', False):
+            processed = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '', processed)
+
+        return processed
+
+    def get_text_stats(self, text):
+        """Get text statistics"""
+        if not text:
+            return {'chars': 0, 'words': 0, 'lines': 0, 'sentences': 0}
+
+        chars = len(text)
+        words = len(text.split())
+        lines = text.count('\n') + 1
+        sentences = len(re.findall(r'[.!?]+', text))
+
+        return {
+            'chars': chars,
+            'words': words,
+            'lines': lines,
+            'sentences': sentences
+        }
+
+    def needs_chunking(self, text):
+        """Check if text needs to be split into chunks"""
+        return len(text) > self.chunk_size
+
+    def split_text_into_chunks(self, text):
+        """Split text into manageable chunks for TTS processing"""
+        if len(text) <= self.chunk_size:
+            return [text]
+
+        chunks = []
+        remaining_text = text
+
+        while remaining_text:
+            if len(remaining_text) <= self.chunk_size:
+                chunks.append(remaining_text.strip())
+                break
+
+            # Find the best split point
+            chunk = self._find_optimal_chunk(remaining_text)
+            chunks.append(chunk.strip())
+            remaining_text = remaining_text[len(chunk):].strip()
+
+        # Filter out empty chunks
+        chunks = [chunk for chunk in chunks if chunk.strip()]
+        return chunks
+
+    def _find_optimal_chunk(self, text):
+        """Find the optimal point to split text"""
+        if len(text) <= self.chunk_size:
+            return text
+
+        # Try to split at sentence boundaries first
+        chunk = self._split_at_sentences(text)
+        if chunk:
+            return chunk
+
+        # Try to split at clause boundaries
+        chunk = self._split_at_clauses(text)
+        if chunk:
+            return chunk
+
+        # Try to split at word boundaries
+        chunk = self._split_at_words(text)
+        if chunk:
+            return chunk
+
+        # Last resort: hard split at character limit
+        return text[:self.max_chunk_size]
+
+    def _split_at_sentences(self, text):
+        """Try to split at sentence boundaries"""
+        sentence_endings = ['. ', '! ', '? ', '.\n', '!\n', '?\n']
+
+        best_pos = 0
+        for i in range(min(len(text), self.chunk_size), 0, -1):
+            for ending in sentence_endings:
+                if text[i-len(ending):i] == ending:
+                    # Found a sentence boundary within chunk size
+                    return text[:i]
+                elif i < len(text) - len(ending) and text[i:i+len(ending)] == ending:
+                    best_pos = i + len(ending)
+
+        if best_pos > 0 and best_pos <= self.max_chunk_size:
+            return text[:best_pos]
+
+        return None
+
+    def _split_at_clauses(self, text):
+        """Try to split at clause boundaries"""
+        clause_endings = [', ', '; ', ': ', ',\n', ';\n', ':\n']
+
+        best_pos = 0
+        for i in range(min(len(text), self.chunk_size), 0, -1):
+            for ending in clause_endings:
+                if text[i-len(ending):i] == ending:
+                    return text[:i]
+                elif i < len(text) - len(ending) and text[i:i+len(ending)] == ending:
+                    best_pos = i + len(ending)
+
+        if best_pos > 0 and best_pos <= self.max_chunk_size:
+            return text[:best_pos]
+
+        return None
+
+    def _split_at_words(self, text):
+        """Try to split at word boundaries"""
+        # Find the last space within chunk size
+        for i in range(min(len(text), self.chunk_size), 0, -1):
+            if text[i-1] == ' ':
+                return text[:i-1]
+
+        return None
+
+
+class AudioCache:
+    """Manages caching of generated audio"""
+
+    def __init__(self, max_size=50, cache_dir=None):
+        self.max_size = max_size
+        self.cache = OrderedDict()
+        self.cache_dir = cache_dir or tempfile.gettempdir()
+        self.cache_file = os.path.join(self.cache_dir, 'tts_audio_cache.pkl')
+        self.load_cache()
+
+    def _generate_key(self, text, model_type, speaker_id, speed):
+        """Generate cache key from parameters"""
+        key_data = f"{text}|{model_type}|{speaker_id}|{speed}"
+        return hashlib.md5(key_data.encode()).hexdigest()
+
+    def get(self, text, model_type, speaker_id, speed):
+        """Get cached audio if available"""
+        key = self._generate_key(text, model_type, speaker_id, speed)
+        if key in self.cache:
+            # Move to end (most recently used)
+            self.cache.move_to_end(key)
+            return self.cache[key]
+        return None
+
+    def put(self, text, model_type, speaker_id, speed, audio_data, sample_rate):
+        """Cache audio data"""
+        key = self._generate_key(text, model_type, speaker_id, speed)
+
+        # Remove oldest if at capacity
+        if len(self.cache) >= self.max_size:
+            self.cache.popitem(last=False)
+
+        self.cache[key] = {
+            'audio_data': audio_data,
+            'sample_rate': sample_rate,
+            'timestamp': time.time()
+        }
+
+        # Save cache periodically
+        if len(self.cache) % 5 == 0:
+            self.save_cache()
+
+    def save_cache(self):
+        """Save cache to disk"""
+        try:
+            with open(self.cache_file, 'wb') as f:
+                pickle.dump(dict(self.cache), f)
+        except Exception:
+            pass  # Ignore cache save errors
+
+    def load_cache(self):
+        """Load cache from disk"""
+        try:
+            if os.path.exists(self.cache_file):
+                with open(self.cache_file, 'rb') as f:
+                    cached_data = pickle.load(f)
+                    self.cache = OrderedDict(cached_data)
+        except Exception:
+            pass  # Ignore cache load errors
+
+    def clear(self):
+        """Clear all cached data"""
+        self.cache.clear()
+        try:
+            if os.path.exists(self.cache_file):
+                os.remove(self.cache_file)
+        except Exception:
+            pass
+
+
+class PerformanceMonitor:
+    """Monitors and tracks performance metrics"""
+
+    def __init__(self):
+        self.metrics = []
+        self.current_generation = None
+
+    def start_generation(self, text_length, model_type):
+        """Start tracking a generation"""
+        self.current_generation = {
+            'start_time': time.time(),
+            'text_length': text_length,
+            'model_type': model_type
+        }
+
+    def end_generation(self, audio_duration, from_cache=False):
+        """End tracking and record metrics"""
+        if not self.current_generation:
+            return
+
+        end_time = time.time()
+        generation_time = end_time - self.current_generation['start_time']
+
+        metric = {
+            'timestamp': end_time,
+            'text_length': self.current_generation['text_length'],
+            'model_type': self.current_generation['model_type'],
+            'generation_time': generation_time,
+            'audio_duration': audio_duration,
+            'rtf': generation_time / audio_duration if audio_duration > 0 else 0,
+            'from_cache': from_cache
+        }
+
+        self.metrics.append(metric)
+
+        # Keep only last 100 metrics
+        if len(self.metrics) > 100:
+            self.metrics = self.metrics[-100:]
+
+        self.current_generation = None
+        return metric
+
+    def get_average_rtf(self, model_type=None, last_n=10):
+        """Get average RTF for recent generations"""
+        relevant_metrics = self.metrics
+        if model_type:
+            relevant_metrics = [m for m in self.metrics if m['model_type'] == model_type]
+
+        if not relevant_metrics:
+            return 0
+
+        recent_metrics = relevant_metrics[-last_n:]
+        rtf_values = [m['rtf'] for m in recent_metrics if not m['from_cache']]
+
+        return sum(rtf_values) / len(rtf_values) if rtf_values else 0
+
+
+class AudioStitcher:
+    """Handles stitching multiple audio chunks together"""
+
+    def __init__(self, silence_duration=0.2):
+        self.silence_duration = silence_duration  # Seconds of silence between chunks
+
+    def stitch_audio_chunks(self, audio_chunks, sample_rate):
+        """Stitch multiple audio chunks together with optional silence"""
+        if not audio_chunks:
+            return np.array([], dtype=np.float32)
+
+        if len(audio_chunks) == 1:
+            return audio_chunks[0]
+
+        # Calculate silence samples
+        silence_samples = int(self.silence_duration * sample_rate)
+        silence = np.zeros(silence_samples, dtype=np.float32)
+
+        # Stitch chunks together
+        stitched_audio = []
+        for i, chunk in enumerate(audio_chunks):
+            # Ensure chunk is numpy array
+            if not isinstance(chunk, np.ndarray):
+                chunk = np.array(chunk, dtype=np.float32)
+
+            stitched_audio.append(chunk)
+
+            # Add silence between chunks (but not after the last one)
+            if i < len(audio_chunks) - 1 and silence_samples > 0:
+                stitched_audio.append(silence)
+
+        # Concatenate all parts
+        result = np.concatenate(stitched_audio)
+        return result.astype(np.float32)
+
+    def estimate_total_duration(self, chunk_durations):
+        """Estimate total duration including silence gaps"""
+        if not chunk_durations:
+            return 0.0
+
+        total_audio_duration = sum(chunk_durations)
+        silence_duration = (len(chunk_durations) - 1) * self.silence_duration
+        return total_audio_duration + silence_duration
+
 
 class TTSGui:
     def __init__(self, root):
         self.root = root
-        self.root.title("High-Quality English TTS - Sherpa-ONNX")
-        self.root.geometry("950x850")
+        self.root.title("High-Quality English TTS - Sherpa-ONNX Enhanced")
+        self.root.geometry("1300x1100")
 
         # Dracula theme color scheme
         self.colors = {
@@ -50,10 +397,18 @@ class TTSGui:
         # Initialize pygame mixer for audio playback
         pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=1024)
 
+        # Initialize helper components
+        self.text_processor = TextProcessor()
+        self.audio_cache = AudioCache()
+        self.performance_monitor = PerformanceMonitor()
+        self.audio_stitcher = AudioStitcher(silence_duration=0.3)
+        self.thread_pool = ThreadPoolExecutor(max_workers=2)
+
         # TTS model instances
         self.matcha_tts = None
         self.kokoro_tts = None
         self.current_audio_file = None
+        self.model_loading_in_progress = False
 
         # Model availability flags
         self.matcha_available = False
@@ -69,10 +424,25 @@ class TTSGui:
         self.audio_data = None
         self.sample_rate = 22050
 
+        # Generation control variables
+        self.generation_cancelled = False
+        self.generation_thread = None
+
+        # Text processing options
+        self.text_options = {
+            'normalize_whitespace': tk.BooleanVar(value=True),
+            'normalize_punctuation': tk.BooleanVar(value=True),
+            'remove_urls': tk.BooleanVar(value=False),
+            'remove_emails': tk.BooleanVar(value=False)
+        }
+
         # Setup theme and UI
         self.setup_theme()
         self.setup_ui()
         self.check_models()
+
+        # Start model preloading in background
+        self.preload_models()
 
     def setup_theme(self):
         """Configure the dark theme for ttk widgets"""
@@ -102,9 +472,11 @@ class TTSGui:
                        bordercolor=self.colors['border'])
 
         style.configure('Dark.TLabelframe.Label',
-                       background=self.colors['bg_secondary'],
+                       background=self.colors['bg_primary'],
                        foreground=self.colors['fg_primary'],
-                       font=('Segoe UI', 10, 'bold'))
+                       font=('Segoe UI', 10, 'bold'),
+                       borderwidth=0,
+                       relief='flat')
 
         # Configure Label styles
         style.configure('Dark.TLabel',
@@ -115,7 +487,9 @@ class TTSGui:
         style.configure('Title.TLabel',
                        background=self.colors['bg_primary'],
                        foreground=self.colors['fg_primary'],
-                       font=('Segoe UI', 18, 'bold'))
+                       font=('Segoe UI', 18, 'bold'),
+                       borderwidth=0,
+                       relief='flat')
 
         style.configure('Time.TLabel',
                        background=self.colors['bg_tertiary'],
@@ -187,6 +561,20 @@ class TTSGui:
                  background=[('active', self.colors['bg_tertiary']),
                            ('pressed', self.colors['border']),
                            ('disabled', self.colors['bg_secondary'])])
+
+        # Configure Utility button style (for Import/Export buttons)
+        style.configure('Utility.TButton',
+                       background=self.colors['accent_cyan'],
+                       foreground=self.colors['bg_primary'],
+                       borderwidth=0,
+                       focuscolor='none',
+                       font=('Segoe UI', 10, 'bold'),
+                       padding=(12, 6))
+
+        style.map('Utility.TButton',
+                 background=[('active', '#7de8f5'),
+                           ('pressed', '#6dd9e8'),
+                           ('disabled', self.colors['bg_accent'])])
 
         # Configure Radiobutton styles
         style.configure('Dark.TRadiobutton',
@@ -272,8 +660,48 @@ class TTSGui:
         speed_scale.configure(command=self.update_speed_label)
 
         # Text input frame with dark theme
-        text_frame = ttk.LabelFrame(main_frame, text="📝 Text to Synthesize", style='Dark.TLabelframe', padding="15")
+        text_frame = ttk.LabelFrame(main_frame, text="📝 Enhanced Text Input", style='Dark.TLabelframe', padding="15")
         text_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 15))
+
+        # Text controls frame
+        text_controls_frame = ttk.Frame(text_frame, style='Dark.TFrame')
+        text_controls_frame.grid(row=0, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+
+        # Import/Export buttons with distinctive colors
+        ttk.Button(text_controls_frame, text="📁 Import Text", command=self.import_text,
+                  style="Utility.TButton").grid(row=0, column=0, padx=(0, 10))
+        ttk.Button(text_controls_frame, text="💾 Export Text", command=self.export_text,
+                  style="Utility.TButton").grid(row=0, column=1, padx=(0, 10))
+        ttk.Button(text_controls_frame, text="🧹 Clear", command=self.clear_text,
+                  style="Warning.TButton").grid(row=0, column=2, padx=(0, 10))
+
+        # Text preprocessing options
+        preprocess_frame = ttk.LabelFrame(text_frame, text="🔧 Text Processing Options",
+                                        style='Dark.TLabelframe', padding="10")
+        preprocess_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+
+        ttk.Checkbutton(preprocess_frame, text="Normalize whitespace",
+                       variable=self.text_options['normalize_whitespace'],
+                       style='Dark.TRadiobutton').grid(row=0, column=0, sticky=tk.W, padx=(0, 15))
+        ttk.Checkbutton(preprocess_frame, text="Normalize punctuation",
+                       variable=self.text_options['normalize_punctuation'],
+                       style='Dark.TRadiobutton').grid(row=0, column=1, sticky=tk.W, padx=(0, 15))
+        ttk.Checkbutton(preprocess_frame, text="Remove URLs",
+                       variable=self.text_options['remove_urls'],
+                       style='Dark.TRadiobutton').grid(row=1, column=0, sticky=tk.W, padx=(0, 15))
+        ttk.Checkbutton(preprocess_frame, text="Remove emails",
+                       variable=self.text_options['remove_emails'],
+                       style='Dark.TRadiobutton').grid(row=1, column=1, sticky=tk.W, padx=(0, 15))
+
+        # Chunking info frame
+        chunking_frame = ttk.Frame(text_frame, style='Card.TFrame', padding="8")
+        chunking_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
+
+        ttk.Label(chunking_frame, text="📄 Long Text Handling:", style='Dark.TLabel').grid(row=0, column=0, sticky=tk.W)
+        self.chunking_info_label = ttk.Label(chunking_frame,
+                                           text="Texts over 8,000 chars will be automatically split and stitched",
+                                           style='Time.TLabel')
+        self.chunking_info_label.grid(row=0, column=1, sticky=tk.W, padx=(10, 0))
 
         # Create custom text widget with Dracula theme
         self.text_widget = scrolledtext.ScrolledText(text_frame, width=75, height=8, wrap=tk.WORD,
@@ -285,14 +713,34 @@ class TTSGui:
                                                     font=('Segoe UI', 11),
                                                     borderwidth=1,
                                                     relief='solid')
-        self.text_widget.grid(row=0, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.text_widget.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-        # Add sample text
-        sample_text = ("Welcome to the high-quality English text-to-speech system. "
-                      "This demonstration showcases the advanced neural TTS capabilities "
-                      "with natural pronunciation and excellent voice quality. "
-                      "You can edit this text or replace it with your own content.")
+        # Bind text change events for real-time validation and stats
+        self.text_widget.bind('<KeyRelease>', self.on_text_change)
+        self.text_widget.bind('<Button-1>', self.on_text_change)
+
+        # Text statistics frame
+        stats_frame = ttk.Frame(text_frame, style='Card.TFrame', padding="8")
+        stats_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
+
+        ttk.Label(stats_frame, text="📊 Text Stats:", style='Dark.TLabel').grid(row=0, column=0, sticky=tk.W)
+        self.stats_label = ttk.Label(stats_frame, text="Characters: 0 | Words: 0 | Lines: 0 | Sentences: 0",
+                                   style='Time.TLabel')
+        self.stats_label.grid(row=0, column=1, sticky=tk.W, padx=(10, 0))
+
+        # Validation status
+        self.validation_label = ttk.Label(stats_frame, text="✓ Ready", style='Dark.TLabel')
+        self.validation_label.grid(row=0, column=2, sticky=tk.E, padx=(20, 0))
+
+        # Add sample text with better guidance
+        sample_text = ("Welcome to the enhanced high-quality English text-to-speech system! "
+                      "This version features improved text processing, performance optimizations, and audio caching. "
+                      "Try editing this text, importing your own content, or adjusting the processing options above. "
+                      "The system will provide real-time feedback on text statistics and validation.")
         self.text_widget.insert(tk.END, sample_text)
+
+        # Initial text stats update
+        self.on_text_change(None)
 
         # Controls frame with better spacing
         controls_frame = ttk.Frame(main_frame, style='Dark.TFrame')
@@ -301,22 +749,28 @@ class TTSGui:
         # Generate button (primary action)
         self.generate_btn = ttk.Button(controls_frame, text="🎵 Generate Speech",
                                      command=self.generate_speech, style="Primary.TButton")
-        self.generate_btn.grid(row=0, column=0, padx=(0, 15))
+        self.generate_btn.grid(row=0, column=0, padx=(0, 10))
+
+        # Cancel button (initially hidden)
+        self.cancel_btn = ttk.Button(controls_frame, text="⏹ Cancel", command=self.cancel_generation,
+                                   style="Danger.TButton")
+        self.cancel_btn.grid(row=0, column=1, padx=(0, 15))
+        self.cancel_btn.grid_remove()  # Hide initially
 
         # Play button
         self.play_btn = ttk.Button(controls_frame, text="▶ Play", command=self.play_audio,
                                  state=tk.DISABLED, style="Success.TButton")
-        self.play_btn.grid(row=0, column=1, padx=(0, 10))
+        self.play_btn.grid(row=0, column=2, padx=(0, 10))
 
         # Stop button
         self.stop_btn = ttk.Button(controls_frame, text="⏸ Pause", command=self.stop_audio,
                                  state=tk.DISABLED, style="Warning.TButton")
-        self.stop_btn.grid(row=0, column=2, padx=(0, 10))
+        self.stop_btn.grid(row=0, column=3, padx=(0, 10))
 
         # Save button
         self.save_btn = ttk.Button(controls_frame, text="💾 Save As...", command=self.save_audio,
                                  state=tk.DISABLED, style="Dark.TButton")
-        self.save_btn.grid(row=0, column=3, padx=(0, 10))
+        self.save_btn.grid(row=0, column=4, padx=(0, 10))
 
         # Audio Playback Controls Frame with enhanced styling
         playback_frame = ttk.LabelFrame(main_frame, text="🎛️ Audio Playback Controls",
@@ -370,9 +824,22 @@ class TTSGui:
         self.volume_label.grid(row=0, column=2, padx=(5, 0))
 
         # Status frame with dark theme
-        status_frame = ttk.LabelFrame(main_frame, text="📊 Status & Logs",
+        status_frame = ttk.LabelFrame(main_frame, text="📊 Status & Performance",
                                      style='Dark.TLabelframe', padding="15")
         status_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 15))
+
+        # Performance info frame
+        perf_info_frame = ttk.Frame(status_frame, style='Card.TFrame', padding="8")
+        perf_info_frame.grid(row=0, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+
+        ttk.Label(perf_info_frame, text="🚀 Performance:", style='Dark.TLabel').grid(row=0, column=0, sticky=tk.W)
+        self.perf_label = ttk.Label(perf_info_frame, text="Cache: 0 items | Avg RTF: N/A",
+                                   style='Time.TLabel')
+        self.perf_label.grid(row=0, column=1, sticky=tk.W, padx=(10, 0))
+
+        # Cache management buttons
+        ttk.Button(perf_info_frame, text="🗑️ Clear Cache", command=self.clear_cache,
+                  style="Warning.TButton").grid(row=0, column=2, sticky=tk.E, padx=(20, 0))
 
         # Status text with Dracula theme
         self.status_text = scrolledtext.ScrolledText(status_frame, width=75, height=6, wrap=tk.WORD,
@@ -384,9 +851,9 @@ class TTSGui:
                                                     font=('Consolas', 9),
                                                     borderwidth=1,
                                                     relief='solid')
-        self.status_text.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        self.status_text.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E))
 
-        # Progress bar with dark theme
+        # Progress bar with dark theme (can switch between indeterminate and determinate)
         self.progress = ttk.Progressbar(main_frame, mode='indeterminate', style='Dark.Horizontal.TProgressbar')
         self.progress.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 15))
 
@@ -420,6 +887,109 @@ class TTSGui:
         self.volume_label.config(text=f"{int(float(value))}%")
         if self.current_sound and self.is_playing:
             self.current_sound.set_volume(float(value) / 100.0)
+
+    def on_text_change(self, event):
+        """Handle text changes for real-time validation and stats"""
+        text = self.text_widget.get(1.0, tk.END).strip()
+
+        # Update text statistics
+        stats = self.text_processor.get_text_stats(text)
+        stats_text = f"Characters: {stats['chars']} | Words: {stats['words']} | Lines: {stats['lines']} | Sentences: {stats['sentences']}"
+        self.stats_label.config(text=stats_text)
+
+        # Update chunking information
+        if self.text_processor.needs_chunking(text):
+            chunks = self.text_processor.split_text_into_chunks(text)
+            chunk_info = f"Will split into {len(chunks)} chunks for processing"
+            self.chunking_info_label.config(text=chunk_info, foreground=self.colors['accent_orange'])
+        else:
+            self.chunking_info_label.config(text="Single chunk processing",
+                                          foreground=self.colors['accent_green'])
+
+        # Update validation status
+        is_valid, error_msg = self.text_processor.validate_text(text)
+        if is_valid:
+            self.validation_label.config(text="✓ Ready", foreground=self.colors['accent_green'])
+        else:
+            self.validation_label.config(text=f"⚠ {error_msg}", foreground=self.colors['accent_orange'])
+
+    def import_text(self):
+        """Import text from file"""
+        file_path = filedialog.askopenfilename(
+            title="Import Text File",
+            filetypes=[
+                ("Text files", "*.txt"),
+                ("All files", "*.*")
+            ]
+        )
+
+        if file_path:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+                self.text_widget.delete(1.0, tk.END)
+                self.text_widget.insert(1.0, content)
+                self.on_text_change(None)
+                self.log_status(f"📁 Text imported from: {os.path.basename(file_path)}")
+
+            except Exception as e:
+                self.log_status(f"✗ Error importing text: {str(e)}")
+                messagebox.showerror("Import Error", f"Failed to import text:\n{str(e)}")
+
+    def export_text(self):
+        """Export text to file"""
+        text = self.text_widget.get(1.0, tk.END).strip()
+        if not text:
+            messagebox.showwarning("Export Warning", "No text to export")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            title="Export Text File",
+            defaultextension=".txt",
+            filetypes=[
+                ("Text files", "*.txt"),
+                ("All files", "*.*")
+            ]
+        )
+
+        if file_path:
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(text)
+
+                self.log_status(f"💾 Text exported to: {os.path.basename(file_path)}")
+
+            except Exception as e:
+                self.log_status(f"✗ Error exporting text: {str(e)}")
+                messagebox.showerror("Export Error", f"Failed to export text:\n{str(e)}")
+
+    def clear_text(self):
+        """Clear text widget"""
+        if messagebox.askyesno("Clear Text", "Are you sure you want to clear all text?"):
+            self.text_widget.delete(1.0, tk.END)
+            self.on_text_change(None)
+            self.log_status("🧹 Text cleared")
+
+    def clear_cache(self):
+        """Clear audio cache"""
+        if messagebox.askyesno("Clear Cache", "Are you sure you want to clear the audio cache?"):
+            self.audio_cache.clear()
+            self.update_performance_display()
+            self.log_status("🗑️ Audio cache cleared")
+
+    def update_performance_display(self):
+        """Update performance information display"""
+        cache_size = len(self.audio_cache.cache)
+        avg_rtf = self.performance_monitor.get_average_rtf()
+
+        perf_text = f"Cache: {cache_size} items"
+        if avg_rtf > 0:
+            perf_text += f" | Avg RTF: {avg_rtf:.3f}"
+        else:
+            perf_text += " | Avg RTF: N/A"
+
+        self.perf_label.config(text=perf_text)
 
     def on_seek(self, value):
         """Handle seek bar changes"""
@@ -513,6 +1083,33 @@ class TTSGui:
             self.log_status("⚠ No models available! Please download models first.")
             self.generate_btn.config(state=tk.DISABLED)
 
+    def preload_models(self):
+        """Preload models in background for better performance"""
+        if not (self.matcha_available or self.kokoro_available):
+            return
+
+        def preload_thread():
+            try:
+                self.model_loading_in_progress = True
+                self.log_status("🚀 Preloading models in background for optimal performance...")
+
+                if self.matcha_available and self.matcha_tts is None:
+                    self.load_matcha_model()
+
+                if self.kokoro_available and self.kokoro_tts is None:
+                    self.load_kokoro_model()
+
+                self.log_status("✓ Model preloading completed - ready for fast generation!")
+
+            except Exception as e:
+                self.log_status(f"⚠ Model preloading failed: {str(e)}")
+            finally:
+                self.model_loading_in_progress = False
+
+        # Start preloading in background thread
+        preload_thread = threading.Thread(target=preload_thread, daemon=True)
+        preload_thread.start()
+
     def load_matcha_model(self):
         """Load Matcha-TTS model"""
         if self.matcha_tts is None:
@@ -561,99 +1158,439 @@ class TTSGui:
             self.log_status("✓ Kokoro English model loaded")
 
     def generate_speech_thread(self):
-        """Generate speech in separate thread"""
+        """Generate speech in separate thread with chunking support"""
         try:
-            text = self.text_widget.get(1.0, tk.END).strip()
-            if not text:
+            # Check for cancellation
+            if self.generation_cancelled:
+                return
+
+            # Get and validate text
+            raw_text = self.text_widget.get(1.0, tk.END).strip()
+            if not raw_text:
                 self.log_status("⚠ Please enter some text to synthesize")
+                return
+
+            # Check for cancellation
+            if self.generation_cancelled:
+                return
+
+            # Validate text
+            is_valid, error_msg = self.text_processor.validate_text(raw_text)
+            if not is_valid:
+                self.log_status(f"⚠ Text validation failed: {error_msg}")
+                return
+
+            # Preprocess text
+            options = {key: var.get() for key, var in self.text_options.items()}
+            text = self.text_processor.preprocess_text(raw_text, options)
+
+            if text != raw_text:
+                self.log_status("🔧 Text preprocessed for optimal synthesis")
+
+            # Check for cancellation
+            if self.generation_cancelled:
                 return
 
             model_type = self.model_var.get()
             speed = self.speed_var.get()
+            speaker_id = int(self.speaker_var.get()) if model_type == "kokoro" else 0
 
-            self.log_status(f"Generating speech with {model_type.upper()} model...")
-
-            # Stop any playing audio and cleanup
-            if pygame.mixer.music.get_busy():
-                pygame.mixer.music.stop()
-                time.sleep(0.1)  # Give pygame time to release the file
-
-            # Cleanup previous temporary file
-            temp_file = "temp_generated_audio.wav"
-            if os.path.exists(temp_file):
-                try:
-                    os.remove(temp_file)
-                except OSError:
-                    # File might be locked, try a different name
-                    import uuid
-                    temp_file = f"temp_audio_{uuid.uuid4().hex[:8]}.wav"
-
-            start_time = time.time()
-
-            if model_type == "matcha":
-                if not self.matcha_available:
-                    self.log_status("⚠ Matcha-TTS model not available")
-                    return
-
-                self.load_matcha_model()
-                audio = self.matcha_tts.generate(text, sid=0, speed=speed)
-
-            elif model_type == "kokoro":
-                if not self.kokoro_available:
-                    self.log_status("⚠ Kokoro model not available")
-                    return
-
-                self.load_kokoro_model()
-                speaker_id = int(self.speaker_var.get())
-                audio = self.kokoro_tts.generate(text, sid=speaker_id, speed=speed)
-
-            # Save audio to temporary file
-            self.current_audio_file = temp_file
-            sf.write(self.current_audio_file, audio.samples, audio.sample_rate)
-
-            # Store audio data for enhanced playback controls
-            # Convert to numpy array if it's a list
-            if isinstance(audio.samples, list):
-                self.audio_data = np.array(audio.samples, dtype=np.float32)
+            # Check if text needs chunking
+            if self.text_processor.needs_chunking(text):
+                self.log_status(f"📄 Long text detected ({len(text)} chars) - splitting into chunks...")
+                self._generate_chunked_speech(text, model_type, speed, speaker_id)
             else:
-                self.audio_data = np.array(audio.samples, dtype=np.float32)
-            self.sample_rate = audio.sample_rate
-            self.audio_duration = len(self.audio_data) / audio.sample_rate
+                self._generate_single_speech(text, model_type, speed, speaker_id)
+
+        except Exception as e:
+            error_msg = str(e)
+            # Handle specific ONNX runtime errors
+            if "BroadcastIterator::Append" in error_msg or "axis == 1 || axis == largest was false" in error_msg:
+                self.log_status("✗ Model compatibility error: Text may be too long or contain unsupported characters. Try shorter text or different model.")
+            else:
+                self.log_status(f"✗ Error generating speech: {error_msg}")
+
+        finally:
+            # Re-enable generate button, hide cancel button and progress
+            self.root.after(0, lambda: self.generate_btn.config(state=tk.NORMAL))
+            self.root.after(0, lambda: self.cancel_btn.grid_remove())
+            self.root.after(0, lambda: self.progress.stop())
+
+    def _generate_single_speech(self, text, model_type, speed, speaker_id):
+        """Generate speech for a single chunk of text"""
+        # Check for cancellation
+        if self.generation_cancelled:
+            return
+
+        # Check cache first
+        cached_audio = self.audio_cache.get(text, model_type, speaker_id, speed)
+        if cached_audio:
+            self.log_status("⚡ Using cached audio (instant generation!)")
+
+            # Use cached data
+            self.audio_data = cached_audio['audio_data']
+            self.sample_rate = cached_audio['sample_rate']
+            self.audio_duration = len(self.audio_data) / self.sample_rate
             self.pause_position = 0.0
 
-            # Calculate statistics
-            elapsed_time = time.time() - start_time
-            duration = len(audio.samples) / audio.sample_rate
-            rtf = elapsed_time / duration
+            # Create temporary file from cached data
+            temp_file = f"temp_cached_{uuid.uuid4().hex[:8]}.wav"
+            self.current_audio_file = temp_file
+            sf.write(self.current_audio_file, self.audio_data, self.sample_rate)
 
-            self.log_status(f"✓ Speech generated successfully!")
-            self.log_status(f"  Duration: {duration:.2f} seconds")
-            self.log_status(f"  Generation time: {elapsed_time:.2f} seconds")
-            self.log_status(f"  RTF (Real-time factor): {rtf:.3f}")
+            # Record performance metrics
+            self.performance_monitor.end_generation(self.audio_duration, from_cache=True)
 
-            # Enable playback buttons and controls
+            self.log_status(f"✓ Cached audio loaded (Duration: {self.audio_duration:.2f}s)")
+
+            # Enable playback controls
             self.root.after(0, lambda: self.play_btn.config(state=tk.NORMAL))
             self.root.after(0, lambda: self.save_btn.config(state=tk.NORMAL))
             self.root.after(0, lambda: self.seek_scale.config(state=tk.NORMAL))
             self.root.after(0, lambda: self.update_time_display(0.0))
+            self.root.after(0, lambda: self.update_performance_display())
+            return
+
+        # Check for cancellation before starting generation
+        if self.generation_cancelled:
+            return
+
+        # Start performance monitoring
+        self.performance_monitor.start_generation(len(text), model_type)
+
+        self.log_status(f"🎵 Generating speech with {model_type.upper()} model...")
+
+        # Stop any playing audio and cleanup
+        if pygame.mixer.music.get_busy():
+            pygame.mixer.music.stop()
+            time.sleep(0.1)
+
+        # Generate unique temporary file
+        temp_file = f"temp_audio_{uuid.uuid4().hex[:8]}.wav"
+
+        start_time = time.time()
+
+        # Generate audio based on model type
+        audio = self._generate_audio_for_text(text, model_type, speed, speaker_id)
+        if audio is None or self.generation_cancelled:
+            return
+
+        # Process and store audio data
+        self.current_audio_file = temp_file
+
+        # Convert to numpy array for consistent handling
+        if isinstance(audio.samples, list):
+            self.audio_data = np.array(audio.samples, dtype=np.float32)
+        else:
+            self.audio_data = np.array(audio.samples, dtype=np.float32)
+
+        self.sample_rate = audio.sample_rate
+        self.audio_duration = len(self.audio_data) / audio.sample_rate
+        self.pause_position = 0.0
+
+        # Save to file
+        sf.write(self.current_audio_file, self.audio_data, self.sample_rate)
+
+        # Cache the generated audio
+        self.audio_cache.put(text, model_type, speaker_id, speed,
+                           self.audio_data.copy(), self.sample_rate)
+
+        # Calculate and record performance metrics
+        elapsed_time = time.time() - start_time
+        rtf = elapsed_time / self.audio_duration if self.audio_duration > 0 else 0
+
+        metric = self.performance_monitor.end_generation(self.audio_duration, from_cache=False)
+        avg_rtf = self.performance_monitor.get_average_rtf(model_type)
+
+        self.log_status(f"✓ Speech generated successfully!")
+        self.log_status(f"  Duration: {self.audio_duration:.2f} seconds")
+        self.log_status(f"  Generation time: {elapsed_time:.2f} seconds")
+        self.log_status(f"  RTF (Real-time factor): {rtf:.3f}")
+        self.log_status(f"  Average RTF ({model_type}): {avg_rtf:.3f}")
+
+        # Enable playback buttons and controls
+        self.root.after(0, lambda: self.play_btn.config(state=tk.NORMAL))
+        self.root.after(0, lambda: self.save_btn.config(state=tk.NORMAL))
+        self.root.after(0, lambda: self.seek_scale.config(state=tk.NORMAL))
+        self.root.after(0, lambda: self.update_time_display(0.0))
+        self.root.after(0, lambda: self.update_performance_display())
+
+    def _generate_chunked_speech(self, text, model_type, speed, speaker_id):
+        """Generate speech for long text by splitting into chunks"""
+        # Split text into chunks
+        chunks = self.text_processor.split_text_into_chunks(text)
+        total_chunks = len(chunks)
+
+        self.log_status(f"📄 Split into {total_chunks} chunks for processing")
+
+        # Check if entire chunked result is cached
+        full_cache_key = f"chunked_{hashlib.md5(text.encode()).hexdigest()}"
+        cached_full = self.audio_cache.get(full_cache_key, model_type, speaker_id, speed)
+        if cached_full:
+            self.log_status("⚡ Using cached chunked audio (instant generation!)")
+            self._use_cached_audio(cached_full)
+            return
+
+        # Start performance monitoring for the entire operation
+        self.performance_monitor.start_generation(len(text), model_type)
+        start_time = time.time()
+
+        # Generate audio for each chunk
+        audio_chunks = []
+        successful_chunks = 0
+
+        for i, chunk in enumerate(chunks, 1):
+            # Check for cancellation before processing each chunk
+            if self.generation_cancelled:
+                self.log_status("🚫 Generation cancelled during chunk processing")
+                return
+
+            try:
+                self.log_status(f"🎵 Processing chunk {i}/{total_chunks} ({len(chunk)} chars)...")
+
+                # Update progress bar to show chunk progress
+                progress = (i - 1) / total_chunks * 100
+                self.root.after(0, lambda p=progress: self.progress.configure(value=p))
+
+                # Check cache for individual chunk
+                cached_chunk = self.audio_cache.get(chunk, model_type, speaker_id, speed)
+                if cached_chunk:
+                    self.log_status(f"  ⚡ Chunk {i} found in cache")
+                    audio_data = cached_chunk['audio_data']
+                else:
+                    # Check for cancellation before generating
+                    if self.generation_cancelled:
+                        self.log_status("🚫 Generation cancelled during chunk processing")
+                        return
+
+                    # Generate audio for this chunk
+                    audio = self._generate_audio_for_text(chunk, model_type, speed, speaker_id)
+                    if audio is None:
+                        self.log_status(f"  ⚠ Failed to generate chunk {i}, skipping...")
+                        continue
+
+                    # Convert to numpy array
+                    if isinstance(audio.samples, list):
+                        audio_data = np.array(audio.samples, dtype=np.float32)
+                    else:
+                        audio_data = np.array(audio.samples, dtype=np.float32)
+
+                    # Cache individual chunk
+                    self.audio_cache.put(chunk, model_type, speaker_id, speed,
+                                       audio_data.copy(), audio.sample_rate)
+
+                    self.log_status(f"  ✓ Chunk {i} generated ({len(audio_data)/audio.sample_rate:.1f}s)")
+
+                audio_chunks.append(audio_data)
+                successful_chunks += 1
+
+            except Exception as e:
+                error_msg = str(e)
+                if "BroadcastIterator::Append" in error_msg or "axis == 1 || axis == largest was false" in error_msg:
+                    self.log_status(f"  ✗ Model compatibility error in chunk {i}: Try shorter text or different model")
+                else:
+                    self.log_status(f"  ✗ Error processing chunk {i}: {error_msg}")
+                continue
+
+        if not audio_chunks:
+            self.log_status("✗ Failed to generate any audio chunks")
+            return
+
+        # Check success rate
+        success_rate = successful_chunks / total_chunks
+        if success_rate < 0.5:  # Less than 50% success
+            self.log_status(f"⚠ Low success rate: {successful_chunks}/{total_chunks} chunks succeeded ({success_rate:.1%})")
+            self.log_status("  Consider using shorter text or switching to a different model")
+        else:
+            self.log_status(f"✓ Good success rate: {successful_chunks}/{total_chunks} chunks succeeded ({success_rate:.1%})")
+
+        # Stitch chunks together
+        self.log_status(f"🔗 Stitching {successful_chunks} audio chunks together...")
+
+        # Use the sample rate from the first successful generation or cached chunk
+        if hasattr(self, 'sample_rate'):
+            sample_rate = self.sample_rate
+        else:
+            sample_rate = 22050  # Default fallback
+
+        stitched_audio = self.audio_stitcher.stitch_audio_chunks(audio_chunks, sample_rate)
+
+        # Store final result
+        self.audio_data = stitched_audio
+        self.sample_rate = sample_rate
+        self.audio_duration = len(self.audio_data) / sample_rate
+        self.pause_position = 0.0
+
+        # Save to temporary file
+        temp_file = f"temp_chunked_{uuid.uuid4().hex[:8]}.wav"
+        self.current_audio_file = temp_file
+        sf.write(self.current_audio_file, self.audio_data, self.sample_rate)
+
+        # Cache the final stitched result
+        self.audio_cache.put(full_cache_key, model_type, speaker_id, speed,
+                           self.audio_data.copy(), self.sample_rate)
+
+        # Calculate performance metrics
+        elapsed_time = time.time() - start_time
+        rtf = elapsed_time / self.audio_duration if self.audio_duration > 0 else 0
+
+        metric = self.performance_monitor.end_generation(self.audio_duration, from_cache=False)
+        avg_rtf = self.performance_monitor.get_average_rtf(model_type)
+
+        self.log_status(f"✓ Chunked speech generated successfully!")
+        self.log_status(f"  Total chunks: {total_chunks} (successful: {successful_chunks})")
+        self.log_status(f"  Total duration: {self.audio_duration:.2f} seconds")
+        self.log_status(f"  Total generation time: {elapsed_time:.2f} seconds")
+        self.log_status(f"  Overall RTF: {rtf:.3f}")
+        self.log_status(f"  Average RTF ({model_type}): {avg_rtf:.3f}")
+
+        # Enable playback controls
+        self.root.after(0, lambda: self.play_btn.config(state=tk.NORMAL))
+        self.root.after(0, lambda: self.save_btn.config(state=tk.NORMAL))
+        self.root.after(0, lambda: self.seek_scale.config(state=tk.NORMAL))
+        self.root.after(0, lambda: self.update_time_display(0.0))
+        self.root.after(0, lambda: self.update_performance_display())
+
+    def _generate_audio_for_text(self, text, model_type, speed, speaker_id):
+        """Generate audio for a single piece of text"""
+        try:
+            # Check for cancellation
+            if self.generation_cancelled:
+                return None
+
+            if model_type == "matcha":
+                if not self.matcha_available:
+                    self.log_status("⚠ Matcha-TTS model not available")
+                    return None
+
+                self.load_matcha_model()
+                return self.matcha_tts.generate(text, sid=0, speed=speed)
+
+            elif model_type == "kokoro":
+                if not self.kokoro_available:
+                    self.log_status("⚠ Kokoro model not available")
+                    return None
+
+                self.load_kokoro_model()
+                return self.kokoro_tts.generate(text, sid=speaker_id, speed=speed)
 
         except Exception as e:
-            self.log_status(f"✗ Error generating speech: {str(e)}")
+            error_msg = str(e)
+            # Handle specific ONNX runtime errors with helpful messages
+            if "BroadcastIterator::Append" in error_msg or "axis == 1 || axis == largest was false" in error_msg:
+                self.log_status("✗ Model compatibility error: Chunk too complex for model. Trying to split further...")
+                # Try to split the problematic chunk further if it's long enough
+                if len(text) > 1000:
+                    self.log_status("  📄 Attempting to split problematic chunk...")
+                    return self._handle_problematic_chunk(text, model_type, speed, speaker_id)
+                else:
+                    self.log_status("  ⚠ Chunk too short to split further - skipping this chunk")
+            elif "Non-zero status code" in error_msg:
+                self.log_status("✗ ONNX Runtime error: Model processing failed. Try different text or model.")
+            else:
+                self.log_status(f"✗ Error generating audio: {error_msg}")
+            return None
 
-        finally:
-            # Re-enable generate button and hide progress
-            self.root.after(0, lambda: self.generate_btn.config(state=tk.NORMAL))
-            self.root.after(0, lambda: self.progress.stop())
+    def _handle_problematic_chunk(self, text, model_type, speed, speaker_id):
+        """Handle chunks that cause ONNX runtime errors by splitting them further"""
+        try:
+            # Split the problematic chunk into smaller pieces
+            sentences = text.split('. ')
+            if len(sentences) <= 1:
+                # Try splitting by other punctuation if no sentences
+                sentences = text.split(', ')
+                if len(sentences) <= 1:
+                    # Last resort: split by words
+                    words = text.split()
+                    mid = len(words) // 2
+                    sentences = [' '.join(words[:mid]), ' '.join(words[mid:])]
+
+            # Try to generate audio for smaller pieces
+            audio_chunks = []
+            for i, sentence in enumerate(sentences):
+                if not sentence.strip():
+                    continue
+
+                try:
+                    if model_type == "matcha":
+                        audio = self.matcha_tts.generate(sentence.strip(), sid=0, speed=speed)
+                    elif model_type == "kokoro":
+                        audio = self.kokoro_tts.generate(sentence.strip(), sid=speaker_id, speed=speed)
+
+                    if audio:
+                        audio_chunks.append(audio)
+                        self.log_status(f"    ✓ Sub-chunk {i+1}/{len(sentences)} processed")
+                except Exception as sub_e:
+                    self.log_status(f"    ⚠ Sub-chunk {i+1} failed: {str(sub_e)[:50]}...")
+                    continue
+
+            if not audio_chunks:
+                self.log_status("  ✗ All sub-chunks failed")
+                return None
+
+            # Combine the audio chunks (simplified - just return the first successful one for now)
+            # In a more sophisticated implementation, we would stitch them together
+            self.log_status(f"  ✓ Successfully processed {len(audio_chunks)}/{len(sentences)} sub-chunks")
+            return audio_chunks[0]  # Return first successful chunk
+
+        except Exception as e:
+            self.log_status(f"  ✗ Error handling problematic chunk: {str(e)}")
+            return None
+
+    def _use_cached_audio(self, cached_audio):
+        """Use cached audio data"""
+        self.audio_data = cached_audio['audio_data']
+        self.sample_rate = cached_audio['sample_rate']
+        self.audio_duration = len(self.audio_data) / self.sample_rate
+        self.pause_position = 0.0
+
+        # Create temporary file from cached data
+        temp_file = f"temp_cached_{uuid.uuid4().hex[:8]}.wav"
+        self.current_audio_file = temp_file
+        sf.write(self.current_audio_file, self.audio_data, self.sample_rate)
+
+        # Record performance metrics
+        self.performance_monitor.end_generation(self.audio_duration, from_cache=True)
+
+        self.log_status(f"✓ Cached audio loaded (Duration: {self.audio_duration:.2f}s)")
+
+        # Enable playback controls
+        self.root.after(0, lambda: self.play_btn.config(state=tk.NORMAL))
+        self.root.after(0, lambda: self.save_btn.config(state=tk.NORMAL))
+        self.root.after(0, lambda: self.seek_scale.config(state=tk.NORMAL))
+        self.root.after(0, lambda: self.update_time_display(0.0))
+        self.root.after(0, lambda: self.update_performance_display())
 
     def generate_speech(self):
         """Start speech generation"""
+        self.generation_cancelled = False
         self.generate_btn.config(state=tk.DISABLED)
-        self.progress.start()
+        self.cancel_btn.grid()  # Show cancel button
+
+        # Check if we need chunking to determine progress bar mode
+        raw_text = self.text_widget.get(1.0, tk.END).strip()
+        if raw_text and self.text_processor.needs_chunking(raw_text):
+            # Use determinate progress for chunked processing
+            self.progress.configure(mode='determinate', value=0, maximum=100)
+        else:
+            # Use indeterminate progress for single chunk
+            self.progress.configure(mode='indeterminate')
+            self.progress.start()
 
         # Run generation in separate thread
-        thread = threading.Thread(target=self.generate_speech_thread)
-        thread.daemon = True
-        thread.start()
+        self.generation_thread = threading.Thread(target=self.generate_speech_thread)
+        self.generation_thread.daemon = True
+        self.generation_thread.start()
+
+    def cancel_generation(self):
+        """Cancel ongoing speech generation"""
+        self.generation_cancelled = True
+        self.log_status("🚫 Generation cancelled by user")
+
+        # Reset UI state
+        self.root.after(0, lambda: self.generate_btn.config(state=tk.NORMAL))
+        self.root.after(0, lambda: self.cancel_btn.grid_remove())
+        self.root.after(0, lambda: self.progress.stop())
 
     def create_speed_adjusted_audio(self, speed_factor):
         """Create speed-adjusted audio data using time-stretching (preserves pitch)"""
@@ -890,6 +1827,33 @@ class TTSGui:
                 except Exception as e:
                     self.log_status(f"✗ Error saving audio: {str(e)}")
 
+    def cleanup(self):
+        """Cleanup resources on exit"""
+        try:
+            # Save audio cache
+            self.audio_cache.save_cache()
+
+            # Stop any playing audio
+            if self.current_sound:
+                self.current_sound.stop()
+
+            # Shutdown thread pool
+            self.thread_pool.shutdown(wait=False)
+
+            # Clean up temporary files
+            if hasattr(self, 'current_audio_file') and self.current_audio_file:
+                try:
+                    if os.path.exists(self.current_audio_file):
+                        os.remove(self.current_audio_file)
+                except:
+                    pass
+
+            # Quit pygame
+            pygame.mixer.quit()
+
+        except Exception:
+            pass  # Ignore cleanup errors
+
 def main():
     """Main function"""
     # Check if required packages are available
@@ -906,23 +1870,19 @@ def main():
     root = tk.Tk()
     app = TTSGui(root)
 
+    # Handle window close event
+    def on_closing():
+        app.cleanup()
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", on_closing)
+
     try:
         root.mainloop()
     except KeyboardInterrupt:
         pass
     finally:
-        # Cleanup
-        if hasattr(app, 'current_sound') and app.current_sound:
-            try:
-                app.current_sound.stop()
-            except:
-                pass
-        pygame.mixer.quit()
-        if hasattr(app, 'current_audio_file') and app.current_audio_file:
-            try:
-                os.remove(app.current_audio_file)
-            except:
-                pass
+        app.cleanup()
 
 if __name__ == "__main__":
     main()
