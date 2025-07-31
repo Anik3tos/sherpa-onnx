@@ -25,6 +25,9 @@ set(sources
   jieba.cc
   keyword-spotter-impl.cc
   keyword-spotter.cc
+  lodr-fst.cc
+  offline-canary-model-config.cc
+  offline-canary-model.cc
   offline-ctc-fst-decoder-config.cc
   offline-ctc-fst-decoder.cc
   offline-ctc-greedy-search-decoder.cc
@@ -50,13 +53,13 @@ set(sources
   offline-rnn-lm.cc
   offline-sense-voice-model-config.cc
   offline-sense-voice-model.cc
-
   offline-source-separation-impl.cc
   offline-source-separation-model-config.cc
   offline-source-separation-spleeter-model-config.cc
   offline-source-separation-spleeter-model.cc
+  offline-source-separation-uvr-model-config.cc
+  offline-source-separation-uvr-model.cc
   offline-source-separation.cc
-
   offline-stream.cc
   offline-tdnn-ctc-model.cc
   offline-tdnn-model-config.cc
@@ -120,6 +123,8 @@ set(sources
   spoken-language-identification.cc
   stack.cc
   symbol-table.cc
+  ten-vad-model-config.cc
+  ten-vad-model.cc
   text-utils.cc
   transducer-keyword-decoder.cc
   transpose.cc
@@ -127,6 +132,7 @@ set(sources
   utils.cc
   vad-model-config.cc
   vad-model.cc
+  version.cc
   voice-activity-detector.cc
   wave-reader.cc
   wave-writer.cc
@@ -335,6 +341,7 @@ if(SHERPA_ONNX_ENABLE_BINARY)
   add_executable(sherpa-onnx-offline-punctuation sherpa-onnx-offline-punctuation.cc)
   add_executable(sherpa-onnx-offline-source-separation sherpa-onnx-offline-source-separation.cc)
   add_executable(sherpa-onnx-online-punctuation sherpa-onnx-online-punctuation.cc)
+  add_executable(sherpa-onnx-version sherpa-onnx-version.cc version.cc)
   add_executable(sherpa-onnx-vad sherpa-onnx-vad.cc)
 
   if(SHERPA_ONNX_ENABLE_TTS)
@@ -394,6 +401,7 @@ if(SHERPA_ONNX_ENABLE_BINARY)
   install(
     TARGETS
       ${main_exes}
+      sherpa-onnx-version
     DESTINATION
       bin
   )
@@ -497,6 +505,10 @@ if(SHERPA_ONNX_ENABLE_PORTAUDIO AND SHERPA_ONNX_ENABLE_BINARY)
     sherpa-onnx-vad-with-offline-asr.cc
   )
 
+  add_executable(sherpa-onnx-vad-with-online-asr
+    sherpa-onnx-vad-with-online-asr.cc
+  )
+
   add_executable(sherpa-onnx-vad-microphone-offline-asr
     sherpa-onnx-vad-microphone-offline-asr.cc
     microphone.cc
@@ -521,6 +533,7 @@ if(SHERPA_ONNX_ENABLE_PORTAUDIO AND SHERPA_ONNX_ENABLE_BINARY)
     sherpa-onnx-vad-microphone
     sherpa-onnx-vad-microphone-offline-asr
     sherpa-onnx-vad-with-offline-asr
+    sherpa-onnx-vad-with-online-asr
   )
   if(SHERPA_ONNX_ENABLE_TTS)
     list(APPEND exes

@@ -3,13 +3,10 @@
 package com.k2fsa.sherpa.onnx;
 
 public class Vad {
-    static {
-        System.loadLibrary("sherpa-onnx-jni");
-    }
-
     private long ptr = 0;
 
     public Vad(VadModelConfig config) {
+        LibraryLoader.maybeLoad();
         ptr = newFromFile(config);
     }
 
@@ -28,6 +25,10 @@ public class Vad {
 
     public void acceptWaveform(float[] samples) {
         acceptWaveform(this.ptr, samples);
+    }
+
+    public float compute(float[] samples) {
+        return compute(this.ptr, samples);
     }
 
     public boolean empty() {
@@ -67,6 +68,8 @@ public class Vad {
     private native long newFromFile(VadModelConfig config);
 
     private native void acceptWaveform(long ptr, float[] samples);
+
+    private native float compute(long ptr, float[] samples);
 
     private native boolean empty(long ptr);
 

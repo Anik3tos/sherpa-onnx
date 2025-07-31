@@ -32,6 +32,7 @@
 #include "sherpa-onnx/csrc/speaker-embedding-manager.h"
 #include "sherpa-onnx/csrc/spoken-language-identification.h"
 #include "sherpa-onnx/csrc/text-utils.h"
+#include "sherpa-onnx/csrc/version.h"
 #include "sherpa-onnx/csrc/voice-activity-detector.h"
 #include "sherpa-onnx/csrc/wave-reader.h"
 #include "sherpa-onnx/csrc/wave-writer.h"
@@ -43,6 +44,10 @@
 #if SHERPA_ONNX_ENABLE_SPEAKER_DIARIZATION == 1
 #include "sherpa-onnx/csrc/offline-speaker-diarization.h"
 #endif
+
+const char *SherpaOnnxGetVersionStr() { return sherpa_onnx::GetVersionStr(); }
+const char *SherpaOnnxGetGitSha1() { return sherpa_onnx::GetGitSha1(); }
+const char *SherpaOnnxGetGitDate() { return sherpa_onnx::GetGitDate(); }
 
 struct SherpaOnnxOnlineRecognizer {
   std::unique_ptr<sherpa_onnx::OnlineRecognizer> impl;
@@ -159,14 +164,15 @@ static sherpa_onnx::OnlineRecognizerConfig GetOnlineRecognizerConfig(
   recognizer_config.hr.rule_fsts = SHERPA_ONNX_OR(config->hr.rule_fsts, "");
 
   if (config->model_config.debug) {
+#if __OHOS__
     auto str_vec = sherpa_onnx::SplitString(recognizer_config.ToString(), 128);
     for (const auto &s : str_vec) {
-#if __OHOS__
       SHERPA_ONNX_LOGE("%{public}s\n", s.c_str());
-#else
       SHERPA_ONNX_LOGE("%s\n", s.c_str());
-#endif
     }
+#else
+    SHERPA_ONNX_LOGE("%s", recognizer_config.ToString().c_str());
+#endif
   }
 
   return recognizer_config;
@@ -478,6 +484,24 @@ static sherpa_onnx::OfflineRecognizerConfig GetOfflineRecognizerConfig(
   recognizer_config.model_config.dolphin.model =
       SHERPA_ONNX_OR(config->model_config.dolphin.model, "");
 
+  recognizer_config.model_config.zipformer_ctc.model =
+      SHERPA_ONNX_OR(config->model_config.zipformer_ctc.model, "");
+
+  recognizer_config.model_config.canary.encoder =
+      SHERPA_ONNX_OR(config->model_config.canary.encoder, "");
+
+  recognizer_config.model_config.canary.decoder =
+      SHERPA_ONNX_OR(config->model_config.canary.decoder, "");
+
+  recognizer_config.model_config.canary.src_lang =
+      SHERPA_ONNX_OR(config->model_config.canary.src_lang, "");
+
+  recognizer_config.model_config.canary.tgt_lang =
+      SHERPA_ONNX_OR(config->model_config.canary.tgt_lang, "");
+
+  recognizer_config.model_config.canary.use_pnc =
+      config->model_config.canary.use_pnc;
+
   recognizer_config.lm_config.model =
       SHERPA_ONNX_OR(config->lm_config.model, "");
   recognizer_config.lm_config.scale =
@@ -507,14 +531,15 @@ static sherpa_onnx::OfflineRecognizerConfig GetOfflineRecognizerConfig(
   recognizer_config.hr.rule_fsts = SHERPA_ONNX_OR(config->hr.rule_fsts, "");
 
   if (config->model_config.debug) {
+#if __OHOS__
     auto str_vec = sherpa_onnx::SplitString(recognizer_config.ToString(), 128);
     for (const auto &s : str_vec) {
-#if __OHOS__
       SHERPA_ONNX_LOGE("%{public}s\n", s.c_str());
-#else
       SHERPA_ONNX_LOGE("%s\n", s.c_str());
-#endif
     }
+#else
+    SHERPA_ONNX_LOGE("%s", recognizer_config.ToString().c_str());
+#endif
   }
 
   return recognizer_config;
@@ -1008,6 +1033,21 @@ sherpa_onnx::VadModelConfig GetVadModelConfig(
   vad_config.silero_vad.max_speech_duration =
       SHERPA_ONNX_OR(config->silero_vad.max_speech_duration, 20);
 
+  vad_config.ten_vad.model = SHERPA_ONNX_OR(config->ten_vad.model, "");
+  vad_config.ten_vad.threshold = SHERPA_ONNX_OR(config->ten_vad.threshold, 0.5);
+
+  vad_config.ten_vad.min_silence_duration =
+      SHERPA_ONNX_OR(config->ten_vad.min_silence_duration, 0.5);
+
+  vad_config.ten_vad.min_speech_duration =
+      SHERPA_ONNX_OR(config->ten_vad.min_speech_duration, 0.25);
+
+  vad_config.ten_vad.window_size =
+      SHERPA_ONNX_OR(config->ten_vad.window_size, 256);
+
+  vad_config.ten_vad.max_speech_duration =
+      SHERPA_ONNX_OR(config->ten_vad.max_speech_duration, 20);
+
   vad_config.sample_rate = SHERPA_ONNX_OR(config->sample_rate, 16000);
   vad_config.num_threads = SHERPA_ONNX_OR(config->num_threads, 1);
   vad_config.provider = SHERPA_ONNX_OR(config->provider, "cpu");
@@ -1162,6 +1202,7 @@ static sherpa_onnx::OfflineTtsConfig GetOfflineTtsConfig(
       SHERPA_ONNX_OR(config->model.kokoro.dict_dir, "");
   tts_config.model.kokoro.lexicon =
       SHERPA_ONNX_OR(config->model.kokoro.lexicon, "");
+  tts_config.model.kokoro.lang = SHERPA_ONNX_OR(config->model.kokoro.lang, "");
 
   tts_config.model.num_threads = SHERPA_ONNX_OR(config->model.num_threads, 1);
   tts_config.model.debug = config->model.debug;
@@ -1366,9 +1407,8 @@ int64_t SherpaOnnxWaveFileSize(int32_t n_samples) {
   return sherpa_onnx::WaveFileSize(n_samples);
 }
 
-SHERPA_ONNX_API void SherpaOnnxWriteWaveToBuffer(const float *samples,
-                                                 int32_t n, int32_t sample_rate,
-                                                 char *buffer) {
+void SherpaOnnxWriteWaveToBuffer(const float *samples, int32_t n,
+                                 int32_t sample_rate, char *buffer) {
   sherpa_onnx::WriteWave(buffer, sample_rate, samples, n);
 }
 

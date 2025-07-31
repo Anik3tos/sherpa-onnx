@@ -24,10 +24,9 @@
 #include <iostream>
 #include <mutex>  // NOLINT
 #include <queue>
-#include <thread>
+#include <thread>  // NOLINT
 #include <vector>
 
-#include "portaudio.h"       // NOLINT
 #include "sherpa-display.h"  // NOLINT
 #include "sherpa-onnx/c-api/cxx-api.h"
 #include "sherpa-onnx/csrc/alsa.h"

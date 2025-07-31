@@ -43,6 +43,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Update version
+        shell: bash
+        run: |
+          ./new-release.sh
+          git diff .
+
       - name: Build sherpa-onnx
         uses: addnab/docker-run-action@v3
         with:
@@ -84,6 +90,7 @@ jobs:
               make install
 
               cp bin/sense-voice-simulate-streaming-alsa-cxx-api install/bin
+              cp bin/zipformer-ctc-simulate-streaming-alsa-cxx-api install/bin
 
               ls -lh install/lib
 

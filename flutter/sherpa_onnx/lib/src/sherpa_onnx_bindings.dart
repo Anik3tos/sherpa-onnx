@@ -201,6 +201,7 @@ final class SherpaOnnxOfflineTtsKokoroModelConfig extends Struct {
   external double lengthScale;
   external Pointer<Utf8> dictDir;
   external Pointer<Utf8> lexicon;
+  external Pointer<Utf8> lang;
 }
 
 final class SherpaOnnxOfflineTtsModelConfig extends Struct {
@@ -265,6 +266,10 @@ final class SherpaOnnxOfflineDolphinModelConfig extends Struct {
   external Pointer<Utf8> model;
 }
 
+final class SherpaOnnxOfflineZipformerCtcModelConfig extends Struct {
+  external Pointer<Utf8> model;
+}
+
 final class SherpaOnnxOfflineWhisperModelConfig extends Struct {
   external Pointer<Utf8> encoder;
   external Pointer<Utf8> decoder;
@@ -273,6 +278,16 @@ final class SherpaOnnxOfflineWhisperModelConfig extends Struct {
 
   @Int32()
   external int tailPaddings;
+}
+
+final class SherpaOnnxOfflineCanaryModelConfig extends Struct {
+  external Pointer<Utf8> encoder;
+  external Pointer<Utf8> decoder;
+  external Pointer<Utf8> srcLang;
+  external Pointer<Utf8> tgtLang;
+
+  @Int32()
+  external int usePnc;
 }
 
 final class SherpaOnnxOfflineMoonshineModelConfig extends Struct {
@@ -332,6 +347,8 @@ final class SherpaOnnxOfflineModelConfig extends Struct {
   external SherpaOnnxOfflineMoonshineModelConfig moonshine;
   external SherpaOnnxOfflineFireRedAsrModelConfig fireRedAsr;
   external SherpaOnnxOfflineDolphinModelConfig dolphin;
+  external SherpaOnnxOfflineZipformerCtcModelConfig zipformerCtc;
+  external SherpaOnnxOfflineCanaryModelConfig canary;
 }
 
 final class SherpaOnnxOfflineRecognizerConfig extends Struct {
@@ -470,6 +487,25 @@ final class SherpaOnnxSileroVadModelConfig extends Struct {
   external double maxSpeechDuration;
 }
 
+final class SherpaOnnxTenVadModelConfig extends Struct {
+  external Pointer<Utf8> model;
+
+  @Float()
+  external double threshold;
+
+  @Float()
+  external double minSilenceDuration;
+
+  @Float()
+  external double minSpeechDuration;
+
+  @Int32()
+  external int windowSize;
+
+  @Float()
+  external double maxSpeechDuration;
+}
+
 final class SherpaOnnxVadModelConfig extends Struct {
   external SherpaOnnxSileroVadModelConfig sileroVad;
 
@@ -483,6 +519,8 @@ final class SherpaOnnxVadModelConfig extends Struct {
 
   @Int32()
   external int debug;
+
+  external SherpaOnnxTenVadModelConfig tenVad;
 }
 
 final class SherpaOnnxSpeechSegment extends Struct {
@@ -870,6 +908,14 @@ typedef CreateOfflineRecognizerNative = Pointer<SherpaOnnxOfflineRecognizer>
 
 typedef CreateOfflineRecognizer = CreateOfflineRecognizerNative;
 
+typedef OfflineRecognizerSetConfigNative = Void Function(
+    Pointer<SherpaOnnxOfflineRecognizer>,
+    Pointer<SherpaOnnxOfflineRecognizerConfig>);
+
+typedef OfflineRecognizerSetConfig = void Function(
+    Pointer<SherpaOnnxOfflineRecognizer>,
+    Pointer<SherpaOnnxOfflineRecognizerConfig>);
+
 typedef DestroyOfflineRecognizerNative = Void Function(
     Pointer<SherpaOnnxOfflineRecognizer>);
 
@@ -1249,6 +1295,15 @@ typedef SherpaOnnxFreeWaveNative = Void Function(Pointer<SherpaOnnxWave>);
 
 typedef SherpaOnnxFreeWave = void Function(Pointer<SherpaOnnxWave>);
 
+typedef SherpaOnnxGetVersionStr = Pointer<Utf8> Function();
+typedef SherpaOnnxGetVersionStrNative = SherpaOnnxGetVersionStr;
+
+typedef SherpaOnnxGetGitSha1Native = Pointer<Utf8> Function();
+typedef SherpaOnnxGetGitSha1 = SherpaOnnxGetGitSha1Native;
+
+typedef SherpaOnnxGetGitDateNative = Pointer<Utf8> Function();
+typedef SherpaOnnxGetGitDate = SherpaOnnxGetGitDateNative;
+
 class SherpaOnnxBindings {
   static SherpaOnnxCreateOfflineSpeechDenoiser?
       sherpaOnnxCreateOfflineSpeechDenoiser;
@@ -1326,6 +1381,7 @@ class SherpaOnnxBindings {
 
   static CreateOfflineRecognizer? createOfflineRecognizer;
   static DestroyOfflineRecognizer? destroyOfflineRecognizer;
+  static OfflineRecognizerSetConfig? offlineRecognizerSetConfig;
   static CreateOfflineStream? createOfflineStream;
   static DestroyOfflineStream? destroyOfflineStream;
   static AcceptWaveformOffline? acceptWaveformOffline;
@@ -1457,6 +1513,10 @@ class SherpaOnnxBindings {
   static SherpaOnnxWriteWave? writeWave;
 
   static SherpaOnnxFreeWave? freeWave;
+
+  static SherpaOnnxGetVersionStr? getVersionStr;
+  static SherpaOnnxGetGitSha1? getGitSha1;
+  static SherpaOnnxGetGitDate? getGitDate;
 
   static void init(DynamicLibrary dynamicLibrary) {
     sherpaOnnxCreateOfflineSpeechDenoiser ??= dynamicLibrary
@@ -1720,6 +1780,11 @@ class SherpaOnnxBindings {
     destroyOfflineRecognizer ??= dynamicLibrary
         .lookup<NativeFunction<DestroyOfflineRecognizerNative>>(
             'SherpaOnnxDestroyOfflineRecognizer')
+        .asFunction();
+
+    offlineRecognizerSetConfig ??= dynamicLibrary
+        .lookup<NativeFunction<OfflineRecognizerSetConfigNative>>(
+            'SherpaOnnxOfflineRecognizerSetConfig')
         .asFunction();
 
     createOfflineStream ??= dynamicLibrary
@@ -2048,6 +2113,21 @@ class SherpaOnnxBindings {
 
     freeWave ??= dynamicLibrary
         .lookup<NativeFunction<SherpaOnnxFreeWaveNative>>('SherpaOnnxFreeWave')
+        .asFunction();
+
+    getVersionStr ??= dynamicLibrary
+        .lookup<NativeFunction<SherpaOnnxGetVersionStrNative>>(
+            'SherpaOnnxGetVersionStr')
+        .asFunction();
+
+    getGitSha1 ??= dynamicLibrary
+        .lookup<NativeFunction<SherpaOnnxGetGitSha1Native>>(
+            'SherpaOnnxGetGitSha1')
+        .asFunction();
+
+    getGitDate ??= dynamicLibrary
+        .lookup<NativeFunction<SherpaOnnxGetGitDateNative>>(
+            'SherpaOnnxGetGitDate')
         .asFunction();
   }
 }

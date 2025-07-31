@@ -6,6 +6,7 @@
 #ifndef SHERPA_ONNX_C_API_CXX_API_H_
 #define SHERPA_ONNX_C_API_CXX_API_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -222,6 +223,14 @@ struct SHERPA_ONNX_API OfflineWhisperModelConfig {
   int32_t tail_paddings = -1;
 };
 
+struct SHERPA_ONNX_API OfflineCanaryModelConfig {
+  std::string encoder;
+  std::string decoder;
+  std::string src_lang;
+  std::string tgt_lang;
+  bool use_pnc = true;
+};
+
 struct SHERPA_ONNX_API OfflineFireRedAsrModelConfig {
   std::string encoder;
   std::string decoder;
@@ -238,6 +247,10 @@ struct SHERPA_ONNX_API OfflineSenseVoiceModelConfig {
 };
 
 struct SHERPA_ONNX_API OfflineDolphinModelConfig {
+  std::string model;
+};
+
+struct SHERPA_ONNX_API OfflineZipformerCtcModelConfig {
   std::string model;
 };
 
@@ -267,6 +280,8 @@ struct SHERPA_ONNX_API OfflineModelConfig {
   OfflineMoonshineModelConfig moonshine;
   OfflineFireRedAsrModelConfig fire_red_asr;
   OfflineDolphinModelConfig dolphin;
+  OfflineZipformerCtcModelConfig zipformer_ctc;
+  OfflineCanaryModelConfig canary;
 };
 
 struct SHERPA_ONNX_API OfflineLMConfig {
@@ -329,6 +344,8 @@ class SHERPA_ONNX_API OfflineRecognizer
 
   OfflineRecognizerResult GetResult(const OfflineStream *s) const;
 
+  void SetConfig(const OfflineRecognizerConfig &config) const;
+
  private:
   explicit OfflineRecognizer(const SherpaOnnxOfflineRecognizer *p);
 };
@@ -367,6 +384,7 @@ struct OfflineTtsKokoroModelConfig {
   std::string data_dir;
   std::string dict_dir;
   std::string lexicon;
+  std::string lang;
 
   float length_scale = 1.0;  // < 1, faster in speed; > 1, slower in speed
 };
@@ -426,6 +444,13 @@ class SHERPA_ONNX_API OfflineTts
                           float speed = 1.0,
                           OfflineTtsCallback callback = nullptr,
                           void *arg = nullptr) const;
+
+  // Like Generate, but return a smart pointer.
+  //
+  // See also https://github.com/k2-fsa/sherpa-onnx/issues/2347
+  std::shared_ptr<GeneratedAudio> Generate2(
+      const std::string &text, int32_t sid = 0, float speed = 1.0,
+      OfflineTtsCallback callback = nullptr, void *arg = nullptr) const;
 
  private:
   explicit OfflineTts(const SherpaOnnxOfflineTts *p);
@@ -527,8 +552,18 @@ struct SileroVadModelConfig {
   float max_speech_duration = 20;
 };
 
+struct TenVadModelConfig {
+  std::string model;
+  float threshold = 0.5;
+  float min_silence_duration = 0.5;
+  float min_speech_duration = 0.25;
+  int32_t window_size = 256;
+  float max_speech_duration = 20;
+};
+
 struct VadModelConfig {
   SileroVadModelConfig silero_vad;
+  TenVadModelConfig ten_vad;
 
   int32_t sample_rate = 16000;
   int32_t num_threads = 1;
@@ -613,6 +648,11 @@ class SHERPA_ONNX_API LinearResampler
  private:
   explicit LinearResampler(const SherpaOnnxLinearResampler *p);
 };
+
+SHERPA_ONNX_API std::string GetVersionStr();
+SHERPA_ONNX_API std::string GetGitSha1();
+SHERPA_ONNX_API std::string GetGitDate();
+SHERPA_ONNX_API bool FileExists(const std::string &filename);
 
 }  // namespace sherpa_onnx::cxx
 
