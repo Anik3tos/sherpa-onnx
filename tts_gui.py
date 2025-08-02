@@ -33,8 +33,17 @@ class TextProcessor:
     def __init__(self):
         self.max_length = 100000  # Maximum total text length (doubled)
         self.min_length = 1      # Minimum text length
-        self.chunk_size = 8000   # Target chunk size for long texts
-        self.max_chunk_size = 9500  # Maximum chunk size before forced split
+        self.chunk_size = 8000   # Target chunk size for long texts (characters)
+        self.max_chunk_size = 9500  # Maximum chunk size before forced split (characters)
+
+        # Model-specific token limits (conservative but not overly restrictive)
+        self.model_token_limits = {
+            'matcha': 700,   # Conservative limit for Matcha-TTS (model max is ~1000)
+            'kokoro': 1100   # Conservative for Kokoro
+        }
+
+        # Approximate characters per token (varies by language/content)
+        self.chars_per_token = 3.5  # More conservative estimate for English
 
     def validate_text(self, text):
         """Validate input text and return (is_valid, error_message)"""
@@ -46,6 +55,40 @@ class TextProcessor:
 
         if len(text.strip()) < self.min_length:
             return False, f"Text too short (min {self.min_length} characters)"
+
+        return True, ""
+
+    def estimate_token_count(self, text):
+        """Estimate token count for text (conservative approximation)"""
+        # More conservative estimation for better accuracy
+        words = len(text.split())
+        punctuation = sum(1 for c in text if c in '.,!?;:()[]{}"-\'')
+        numbers = sum(1 for c in text if c.isdigit())
+        special_chars = sum(1 for c in text if not c.isalnum() and c not in ' .,!?;:()[]{}"-\'')
+
+        # Conservative token estimation with safety margins
+        estimated_tokens = int((words * 1.3) + (punctuation * 0.8) + (numbers * 0.3) + (special_chars * 0.5))
+
+        # Add extra safety margin for complex text
+        if len(text) > 1000:
+            estimated_tokens = int(estimated_tokens * 1.2)  # 20% extra buffer for long text
+
+        return max(estimated_tokens, len(text) // 3)  # Minimum 1 token per 3 characters
+
+    def get_model_safe_chunk_size(self, model_type):
+        """Get safe chunk size for specific model based on token limits"""
+        token_limit = self.model_token_limits.get(model_type, 600)
+        # Convert token limit to character limit with aggressive safety margin
+        safe_char_limit = int(token_limit * self.chars_per_token * 0.6)  # 40% safety margin
+        return min(safe_char_limit, self.chunk_size)
+
+    def validate_chunk_for_model(self, text, model_type):
+        """Validate that a chunk is safe for the specified model"""
+        token_count = self.estimate_token_count(text)
+        token_limit = self.model_token_limits.get(model_type, 600)
+
+        if token_count > token_limit:
+            return False, f"Chunk has ~{token_count} tokens, exceeds {model_type} limit of {token_limit}"
 
         return True, ""
 
@@ -102,92 +145,196 @@ class TextProcessor:
         """Check if text needs to be split into chunks"""
         return len(text) > self.chunk_size
 
-    def split_text_into_chunks(self, text):
+    def split_text_into_chunks(self, text, model_type='matcha'):
         """Split text into manageable chunks for TTS processing"""
-        if len(text) <= self.chunk_size:
-            return [text]
+        safe_chunk_size = self.get_model_safe_chunk_size(model_type)
+
+        if len(text) <= safe_chunk_size:
+            # Double-check token count for single chunk
+            if self.estimate_token_count(text) <= self.model_token_limits.get(model_type, 800):
+                return [text]
 
         chunks = []
         remaining_text = text
 
         while remaining_text:
-            if len(remaining_text) <= self.chunk_size:
-                chunks.append(remaining_text.strip())
-                break
+            if len(remaining_text) <= safe_chunk_size:
+                # Final chunk - check token count
+                if self.estimate_token_count(remaining_text) <= self.model_token_limits.get(model_type, 800):
+                    chunks.append(remaining_text.strip())
+                    break
+                else:
+                    # Still too many tokens, need to split further
+                    chunk = self._find_optimal_chunk(remaining_text, model_type)
+                    chunks.append(chunk.strip())
+                    remaining_text = remaining_text[len(chunk):].strip()
+            else:
+                # Find the best split point
+                chunk = self._find_optimal_chunk(remaining_text, model_type)
+                chunks.append(chunk.strip())
+                remaining_text = remaining_text[len(chunk):].strip()
 
-            # Find the best split point
-            chunk = self._find_optimal_chunk(remaining_text)
-            chunks.append(chunk.strip())
-            remaining_text = remaining_text[len(chunk):].strip()
+        # Filter out empty chunks and validate each chunk
+        validated_chunks = []
+        for i, chunk in enumerate(chunks):
+            if not chunk.strip():
+                continue
 
-        # Filter out empty chunks
-        chunks = [chunk for chunk in chunks if chunk.strip()]
-        return chunks
+            is_valid, error_msg = self.validate_chunk_for_model(chunk, model_type)
+            if not is_valid:
+                # Chunk might be too large, but let's be less aggressive about splitting
+                estimated_tokens = self.estimate_token_count(chunk)
+                token_limit = self.model_token_limits.get(model_type, 700)
 
-    def _find_optimal_chunk(self, text):
-        """Find the optimal point to split text"""
-        if len(text) <= self.chunk_size:
-            return text
+                # Only split if significantly over the limit (more than 20% over)
+                if estimated_tokens > token_limit * 1.2:
+                    print(f"Warning: Chunk {i+1} significantly over limit ({estimated_tokens} > {token_limit * 1.2:.0f}): {error_msg}")
+                    # Try to split this chunk into smaller pieces
+                    sub_chunks = self._emergency_split_chunk(chunk, model_type)
+                    validated_chunks.extend(sub_chunks)
+                else:
+                    # Close to limit but not too bad, let it through with warning
+                    print(f"Warning: Chunk {i+1} slightly over limit but allowing: {error_msg}")
+                    validated_chunks.append(chunk)
+            else:
+                validated_chunks.append(chunk)
+
+        return validated_chunks
+
+    def _emergency_split_chunk(self, text, model_type):
+        """Emergency splitting for chunks that are still too large"""
+        token_limit = self.model_token_limits.get(model_type, 700)
+
+        # Try splitting by sentences first (preserve original endings)
+        import re
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        if len(sentences) > 1:
+            result_chunks = []
+            current_chunk = ""
+
+            for sentence in sentences:
+                # Preserve original spacing
+                separator = " " if current_chunk else ""
+                test_chunk = current_chunk + separator + sentence
+                if self.estimate_token_count(test_chunk) <= token_limit:
+                    current_chunk = test_chunk
+                else:
+                    if current_chunk:
+                        result_chunks.append(current_chunk.strip())
+                    current_chunk = sentence
+
+            if current_chunk:
+                result_chunks.append(current_chunk.strip())
+
+            return result_chunks
+
+        # If no sentences, split by words
+        words = text.split()
+        result_chunks = []
+        current_chunk = ""
+
+        for word in words:
+            test_chunk = current_chunk + " " + word if current_chunk else word
+            if self.estimate_token_count(test_chunk) <= token_limit:
+                current_chunk = test_chunk
+            else:
+                if current_chunk:
+                    result_chunks.append(current_chunk)
+                current_chunk = word
+
+        if current_chunk:
+            result_chunks.append(current_chunk)
+
+        return result_chunks
+
+    def _find_optimal_chunk(self, text, model_type='matcha'):
+        """Find the optimal point to split text based on model constraints"""
+        safe_chunk_size = self.get_model_safe_chunk_size(model_type)
+        token_limit = self.model_token_limits.get(model_type, 800)
+
+        if len(text) <= safe_chunk_size:
+            # Check token count even for short text
+            if self.estimate_token_count(text) <= token_limit:
+                return text
 
         # Try to split at sentence boundaries first
-        chunk = self._split_at_sentences(text)
+        chunk = self._split_at_sentences(text, model_type)
         if chunk:
             return chunk
 
         # Try to split at clause boundaries
-        chunk = self._split_at_clauses(text)
+        chunk = self._split_at_clauses(text, model_type)
         if chunk:
             return chunk
 
         # Try to split at word boundaries
-        chunk = self._split_at_words(text)
+        chunk = self._split_at_words(text, model_type)
         if chunk:
             return chunk
 
-        # Last resort: hard split at character limit
-        return text[:self.max_chunk_size]
+        # Last resort: hard split at safe character limit
+        return text[:safe_chunk_size]
 
-    def _split_at_sentences(self, text):
+    def _split_at_sentences(self, text, model_type='matcha'):
         """Try to split at sentence boundaries"""
         sentence_endings = ['. ', '! ', '? ', '.\n', '!\n', '?\n']
+        safe_chunk_size = self.get_model_safe_chunk_size(model_type)
+        token_limit = self.model_token_limits.get(model_type, 800)
 
         best_pos = 0
-        for i in range(min(len(text), self.chunk_size), 0, -1):
+        for i in range(min(len(text), safe_chunk_size), 0, -1):
             for ending in sentence_endings:
                 if text[i-len(ending):i] == ending:
-                    # Found a sentence boundary within chunk size
-                    return text[:i]
+                    # Found a sentence boundary - check token count
+                    candidate = text[:i]
+                    if self.estimate_token_count(candidate) <= token_limit:
+                        return candidate
                 elif i < len(text) - len(ending) and text[i:i+len(ending)] == ending:
-                    best_pos = i + len(ending)
+                    candidate_pos = i + len(ending)
+                    candidate = text[:candidate_pos]
+                    if self.estimate_token_count(candidate) <= token_limit:
+                        best_pos = candidate_pos
 
-        if best_pos > 0 and best_pos <= self.max_chunk_size:
+        if best_pos > 0:
             return text[:best_pos]
 
         return None
 
-    def _split_at_clauses(self, text):
+    def _split_at_clauses(self, text, model_type='matcha'):
         """Try to split at clause boundaries"""
         clause_endings = [', ', '; ', ': ', ',\n', ';\n', ':\n']
+        safe_chunk_size = self.get_model_safe_chunk_size(model_type)
+        token_limit = self.model_token_limits.get(model_type, 800)
 
         best_pos = 0
-        for i in range(min(len(text), self.chunk_size), 0, -1):
+        for i in range(min(len(text), safe_chunk_size), 0, -1):
             for ending in clause_endings:
                 if text[i-len(ending):i] == ending:
-                    return text[:i]
+                    candidate = text[:i]
+                    if self.estimate_token_count(candidate) <= token_limit:
+                        return candidate
                 elif i < len(text) - len(ending) and text[i:i+len(ending)] == ending:
-                    best_pos = i + len(ending)
+                    candidate_pos = i + len(ending)
+                    candidate = text[:candidate_pos]
+                    if self.estimate_token_count(candidate) <= token_limit:
+                        best_pos = candidate_pos
 
-        if best_pos > 0 and best_pos <= self.max_chunk_size:
+        if best_pos > 0:
             return text[:best_pos]
 
         return None
 
-    def _split_at_words(self, text):
+    def _split_at_words(self, text, model_type='matcha'):
         """Try to split at word boundaries"""
-        # Find the last space within chunk size
-        for i in range(min(len(text), self.chunk_size), 0, -1):
+        safe_chunk_size = self.get_model_safe_chunk_size(model_type)
+        token_limit = self.model_token_limits.get(model_type, 800)
+
+        # Find the last space within safe chunk size
+        for i in range(min(len(text), safe_chunk_size), 0, -1):
             if text[i-1] == ' ':
-                return text[:i-1]
+                candidate = text[:i-1]
+                if self.estimate_token_count(candidate) <= token_limit:
+                    return candidate
 
         return None
 
@@ -899,8 +1046,10 @@ class TTSGui:
 
         # Update chunking information
         if self.text_processor.needs_chunking(text):
-            chunks = self.text_processor.split_text_into_chunks(text)
-            chunk_info = f"Will split into {len(chunks)} chunks for processing"
+            # Use current model type for chunking preview
+            model_type = self.model_var.get()
+            chunks = self.text_processor.split_text_into_chunks(text, model_type)
+            chunk_info = f"Will split into {len(chunks)} chunks for {model_type.upper()} model"
             self.chunking_info_label.config(text=chunk_info, foreground=self.colors['accent_orange'])
         else:
             self.chunking_info_label.config(text="Single chunk processing",
@@ -1145,6 +1294,7 @@ class TTSGui:
                         "./kokoro-en-v0_19/model.onnx",  # model
                         "./kokoro-en-v0_19/voices.bin",  # voices
                         "./kokoro-en-v0_19/tokens.txt",  # tokens
+                        "",  # lexicon (empty string as no separate lexicon file)
                         "./kokoro-en-v0_19/espeak-ng-data",  # data_dir
                     ),
                     num_threads=2,
@@ -1317,11 +1467,18 @@ class TTSGui:
 
     def _generate_chunked_speech(self, text, model_type, speed, speaker_id):
         """Generate speech for long text by splitting into chunks"""
-        # Split text into chunks
-        chunks = self.text_processor.split_text_into_chunks(text)
+        # Split text into chunks using model-aware chunking
+        chunks = self.text_processor.split_text_into_chunks(text, model_type)
         total_chunks = len(chunks)
 
-        self.log_status(f"📄 Split into {total_chunks} chunks for processing")
+        self.log_status(f"📄 Split into {total_chunks} chunks for {model_type.upper()} model (token-aware chunking)")
+
+        # Log chunk sizes for debugging
+        for i, chunk in enumerate(chunks[:3], 1):  # Show first 3 chunks
+            estimated_tokens = self.text_processor.estimate_token_count(chunk)
+            self.log_status(f"  Chunk {i}: {len(chunk)} chars, ~{estimated_tokens} tokens")
+        if total_chunks > 3:
+            self.log_status(f"  ... and {total_chunks - 3} more chunks")
 
         # Check if entire chunked result is cached
         full_cache_key = f"chunked_{hashlib.md5(text.encode()).hexdigest()}"
@@ -1364,6 +1521,9 @@ class TTSGui:
                         return
 
                     # Generate audio for this chunk
+                    estimated_tokens = self.text_processor.estimate_token_count(chunk)
+                    self.log_status(f"  🔍 Chunk {i}: {len(chunk)} chars, ~{estimated_tokens} tokens")
+
                     audio = self._generate_audio_for_text(chunk, model_type, speed, speaker_id)
                     if audio is None:
                         self.log_status(f"  ⚠ Failed to generate chunk {i}, skipping...")
@@ -1383,26 +1543,33 @@ class TTSGui:
 
                 audio_chunks.append(audio_data)
                 successful_chunks += 1
+                self.log_status(f"  ✓ Chunk {i} completed successfully")
 
             except Exception as e:
                 error_msg = str(e)
                 if "BroadcastIterator::Append" in error_msg or "axis == 1 || axis == largest was false" in error_msg:
-                    self.log_status(f"  ✗ Model compatibility error in chunk {i}: Try shorter text or different model")
+                    self.log_status(f"  ✗ Model compatibility error in chunk {i}: {error_msg[:100]}...")
                 else:
-                    self.log_status(f"  ✗ Error processing chunk {i}: {error_msg}")
+                    self.log_status(f"  ✗ Error processing chunk {i}: {error_msg[:100]}...")
+                self.log_status(f"  ⏭ Continuing with remaining chunks...")
                 continue
 
         if not audio_chunks:
             self.log_status("✗ Failed to generate any audio chunks")
             return
 
-        # Check success rate
+        # Check success rate and provide detailed feedback
         success_rate = successful_chunks / total_chunks
+        failed_chunks = total_chunks - successful_chunks
+
         if success_rate < 0.5:  # Less than 50% success
             self.log_status(f"⚠ Low success rate: {successful_chunks}/{total_chunks} chunks succeeded ({success_rate:.1%})")
-            self.log_status("  Consider using shorter text or switching to a different model")
-        else:
+            self.log_status(f"  {failed_chunks} chunks failed - consider using shorter text or switching to a different model")
+        elif failed_chunks > 0:
             self.log_status(f"✓ Good success rate: {successful_chunks}/{total_chunks} chunks succeeded ({success_rate:.1%})")
+            self.log_status(f"  Note: {failed_chunks} chunks were skipped due to errors")
+        else:
+            self.log_status(f"✓ Perfect success rate: All {total_chunks} chunks processed successfully!")
 
         # Stitch chunks together
         self.log_status(f"🔗 Stitching {successful_chunks} audio chunks together...")
@@ -1457,6 +1624,12 @@ class TTSGui:
             # Check for cancellation
             if self.generation_cancelled:
                 return None
+
+            # Final validation before sending to model (with warning only)
+            is_valid, error_msg = self.text_processor.validate_chunk_for_model(text, model_type)
+            if not is_valid:
+                self.log_status(f"⚠ Chunk validation warning: {error_msg} - attempting anyway...")
+                # Don't return None, try to generate anyway as validation might be too conservative
 
             if model_type == "matcha":
                 if not self.matcha_available:
@@ -1566,6 +1739,9 @@ class TTSGui:
         self.generation_cancelled = False
         self.generate_btn.config(state=tk.DISABLED)
         self.cancel_btn.grid()  # Show cancel button
+
+        # Log that we're using the new token-aware chunking system
+        self.log_status("🔄 Using improved token-aware chunking system...")
 
         # Check if we need chunking to determine progress bar mode
         raw_text = self.text_widget.get(1.0, tk.END).strip()
