@@ -1267,11 +1267,11 @@ class TTSGui:
             config = sherpa_onnx.OfflineTtsConfig(
                 model=sherpa_onnx.OfflineTtsModelConfig(
                     matcha=sherpa_onnx.OfflineTtsMatchaModelConfig(
-                        "./matcha-icefall-en_US-ljspeech/model-steps-3.onnx",  # acoustic_model
-                        "./vocos-22khz-univ.onnx",  # vocoder
-                        "",  # lexicon (empty for English)
-                        "./matcha-icefall-en_US-ljspeech/tokens.txt",  # tokens
-                        "./matcha-icefall-en_US-ljspeech/espeak-ng-data",  # data_dir
+                        acoustic_model="matcha-icefall-en_US-ljspeech/model-steps-3.onnx",
+                        vocoder="vocos-22khz-univ.onnx",
+                        lexicon="",  # empty for English
+                        tokens="matcha-icefall-en_US-ljspeech/tokens.txt",
+                        data_dir="matcha-icefall-en_US-ljspeech/espeak-ng-data",
                     ),
                     num_threads=2,
                     debug=False,
@@ -1291,11 +1291,11 @@ class TTSGui:
             config = sherpa_onnx.OfflineTtsConfig(
                 model=sherpa_onnx.OfflineTtsModelConfig(
                     kokoro=sherpa_onnx.OfflineTtsKokoroModelConfig(
-                        "./kokoro-en-v0_19/model.onnx",  # model
-                        "./kokoro-en-v0_19/voices.bin",  # voices
-                        "./kokoro-en-v0_19/tokens.txt",  # tokens
-                        "",  # lexicon (empty string as no separate lexicon file)
-                        "./kokoro-en-v0_19/espeak-ng-data",  # data_dir
+                        model="kokoro-en-v0_19/model.onnx",
+                        voices="kokoro-en-v0_19/voices.bin",
+                        tokens="kokoro-en-v0_19/tokens.txt",
+                        lexicon="",  # empty string as no separate lexicon file
+                        data_dir="kokoro-en-v0_19/espeak-ng-data",
                     ),
                     num_threads=2,
                     debug=False,
@@ -1384,7 +1384,7 @@ class TTSGui:
             self.pause_position = 0.0
 
             # Create temporary file from cached data
-            temp_file = f"temp_cached_{uuid.uuid4().hex[:8]}.wav"
+            temp_file = f"audio_output/temp_cached_{uuid.uuid4().hex[:8]}.wav"
             self.current_audio_file = temp_file
             sf.write(self.current_audio_file, self.audio_data, self.sample_rate)
 
@@ -1416,7 +1416,7 @@ class TTSGui:
             time.sleep(0.1)
 
         # Generate unique temporary file
-        temp_file = f"temp_audio_{uuid.uuid4().hex[:8]}.wav"
+        temp_file = f"audio_output/temp_audio_{uuid.uuid4().hex[:8]}.wav"
 
         start_time = time.time()
 
@@ -1589,7 +1589,7 @@ class TTSGui:
         self.pause_position = 0.0
 
         # Save to temporary file
-        temp_file = f"temp_chunked_{uuid.uuid4().hex[:8]}.wav"
+        temp_file = f"audio_output/temp_chunked_{uuid.uuid4().hex[:8]}.wav"
         self.current_audio_file = temp_file
         sf.write(self.current_audio_file, self.audio_data, self.sample_rate)
 
@@ -1718,7 +1718,7 @@ class TTSGui:
         self.pause_position = 0.0
 
         # Create temporary file from cached data
-        temp_file = f"temp_cached_{uuid.uuid4().hex[:8]}.wav"
+        temp_file = f"audio_output/temp_cached_{uuid.uuid4().hex[:8]}.wav"
         self.current_audio_file = temp_file
         sf.write(self.current_audio_file, self.audio_data, self.sample_rate)
 
@@ -1991,6 +1991,7 @@ class TTSGui:
             file_path = filedialog.asksaveasfilename(
                 title="Save Audio As",
                 defaultextension=".wav",
+                initialdir="audio_output",
                 filetypes=[("WAV files", "*.wav"), ("All files", "*.*")]
             )
 
