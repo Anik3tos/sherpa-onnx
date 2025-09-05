@@ -142,3 +142,21 @@ README-DEV.txt
 .idea
 sherpa-onnx-dolphin-base-ctc-multi-lang-int8-2025-04-02
 dict
+
+# TTS Model directories (added for enhanced TTS GUI)
+kokoro-multi-lang-v1_1/
+ru_RU-denis-medium/
+ru_RU-dmitri-medium/
+ru_RU-irina-medium/
+ru_RU-ruslan-medium/
+vits-piper-en_US-libritts_r-medium/
+vits-piper-en_US-glados/
+vocos-22khz-univ.onnx
+
+# Temporary files and downloads
+espeak-ng-data/
+espeak-ng-data.tar.bz2
+*.tar.bz2
+download_*.py
+fix_*.py
+test_*.py

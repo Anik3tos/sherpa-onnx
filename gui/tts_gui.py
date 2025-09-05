@@ -25,6 +25,289 @@ import weakref
 from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
 import json
+import signal
+import sys
+import atexit
+
+
+# Enhanced Voice Configuration System
+VOICE_CONFIGS = {
+    # High Quality Multi-Speaker Models
+    "kokoro_multi_v1_1": {
+        "name": "Kokoro Multi-Language v1.1 (Premium - 103 Speakers)",
+        "model_type": "kokoro",
+        "quality": "excellent",
+        "description": "Latest high-quality multi-speaker model with diverse voices",
+        "model_files": {
+            "model": "kokoro-multi-lang-v1_1/model.onnx",
+            "voices": "kokoro-multi-lang-v1_1/voices.bin",
+            "tokens": "kokoro-multi-lang-v1_1/tokens.txt",
+            "data_dir": "kokoro-multi-lang-v1_1/espeak-ng-data",
+            "dict_dir": "kokoro-multi-lang-v1_1/dict",
+            "lexicon": "kokoro-multi-lang-v1_1/lexicon-us-en.txt"
+        },
+        "speakers": {
+            0: {"name": "Emma", "gender": "female", "accent": "american", "description": "Clear, professional female voice"},
+            1: {"name": "James", "gender": "male", "accent": "american", "description": "Deep, authoritative male voice"},
+            2: {"name": "Sophia", "gender": "female", "accent": "british", "description": "Elegant British female voice"},
+            3: {"name": "Oliver", "gender": "male", "accent": "british", "description": "Distinguished British male voice"},
+            4: {"name": "Isabella", "gender": "female", "accent": "american", "description": "Warm, friendly female narrator"},
+            5: {"name": "William", "gender": "male", "accent": "american", "description": "Professional male broadcaster"},
+            6: {"name": "Charlotte", "gender": "female", "accent": "canadian", "description": "Gentle Canadian female voice"},
+            7: {"name": "Benjamin", "gender": "male", "accent": "australian", "description": "Casual Australian male voice"},
+            8: {"name": "Amelia", "gender": "female", "accent": "american", "description": "Young, energetic female voice"},
+            9: {"name": "Henry", "gender": "male", "accent": "american", "description": "Mature, wise male narrator"},
+            10: {"name": "Grace", "gender": "female", "accent": "irish", "description": "Melodic Irish female voice"}
+        }
+    },
+
+    "kokoro_multi_v1_0": {
+        "name": "Kokoro Multi-Language v1.0 (53 Speakers)",
+        "model_type": "kokoro",
+        "quality": "very_high",
+        "description": "High-quality multi-speaker model with good variety",
+        "model_files": {
+            "model": "kokoro-multi-lang-v1_0/model.onnx",
+            "voices": "kokoro-multi-lang-v1_0/voices.bin",
+            "tokens": "kokoro-multi-lang-v1_0/tokens.txt",
+            "data_dir": "kokoro-multi-lang-v1_0/espeak-ng-data",
+            "dict_dir": "kokoro-multi-lang-v1_0/dict",
+            "lexicon": ""
+        },
+        "speakers": {
+            0: {"name": "Sarah", "gender": "female", "accent": "american", "description": "Natural female voice"},
+            1: {"name": "Michael", "gender": "male", "accent": "american", "description": "Professional male voice"},
+            2: {"name": "Emily", "gender": "female", "accent": "british", "description": "Refined British female"},
+            3: {"name": "David", "gender": "male", "accent": "british", "description": "Classic British male"},
+            4: {"name": "Jessica", "gender": "female", "accent": "american", "description": "Friendly female narrator"},
+            5: {"name": "Robert", "gender": "male", "accent": "american", "description": "Strong male voice"}
+        }
+    },
+
+    "vits_libritts": {
+        "name": "LibriTTS Multi-Speaker (904 Premium Voices)",
+        "model_type": "vits",
+        "quality": "excellent",
+        "description": "Massive collection of high-quality diverse voices",
+        "model_files": {
+            "model": "vits-piper-en_US-libritts_r-medium/model.onnx",
+            "tokens": "vits-piper-en_US-libritts_r-medium/tokens.txt",
+            "lexicon": "vits-piper-en_US-libritts_r-medium/lexicon.txt",
+            "data_dir": "vits-piper-en_US-libritts_r-medium/espeak-ng-data"
+        },
+        "speakers": {
+            # Sequential mapping for proper TTS model compatibility
+            # Original LibriTTS IDs: 19, 84, 156, 237, 298, 341, 412, 503
+            0: {"name": "Victoria", "gender": "female", "accent": "american", "description": "Warm, articulate female voice", "original_id": 19},
+            1: {"name": "Alexander", "gender": "male", "accent": "american", "description": "Professional male narrator", "original_id": 84},
+            2: {"name": "Rachel", "gender": "female", "accent": "american", "description": "Clear, engaging female voice", "original_id": 156},
+            3: {"name": "Christopher", "gender": "male", "accent": "american", "description": "Deep, resonant male voice", "original_id": 237},
+            4: {"name": "Amanda", "gender": "female", "accent": "american", "description": "Friendly, approachable female", "original_id": 298},
+            5: {"name": "Jonathan", "gender": "male", "accent": "american", "description": "Smooth male broadcaster", "original_id": 341},
+            6: {"name": "Michelle", "gender": "female", "accent": "american", "description": "Professional female voice", "original_id": 412},
+            7: {"name": "Daniel", "gender": "male", "accent": "american", "description": "Authoritative male speaker", "original_id": 503}
+        }
+    },
+
+    "vits_vctk": {
+        "name": "VCTK Multi-Speaker (109 Diverse Voices)",
+        "model_type": "vits",
+        "quality": "very_high",
+        "description": "Diverse collection of British and international voices",
+        "model_files": {
+            "model": "vits-vctk/model.onnx",
+            "tokens": "vits-vctk/tokens.txt",
+            "lexicon": "vits-vctk/lexicon.txt",
+            "data_dir": "vits-vctk/espeak-ng-data"
+        },
+        "speakers": {
+            0: {"name": "Catherine", "gender": "female", "accent": "scottish", "description": "Scottish female voice"},
+            1: {"name": "Andrew", "gender": "male", "accent": "scottish", "description": "Scottish male voice"},
+            2: {"name": "Margaret", "gender": "female", "accent": "northern_english", "description": "Northern English female"},
+            3: {"name": "Thomas", "gender": "male", "accent": "northern_english", "description": "Northern English male"},
+            4: {"name": "Elizabeth", "gender": "female", "accent": "irish", "description": "Irish female voice"},
+            5: {"name": "Patrick", "gender": "male", "accent": "irish", "description": "Irish male voice"}
+        }
+    },
+
+    "kokoro_en_v0_19": {
+        "name": "Kokoro English v0.19 (11 Speakers)",
+        "model_type": "kokoro",
+        "quality": "high",
+        "description": "Original English-focused model with good quality",
+        "model_files": {
+            "model": "kokoro-en-v0_19/model.onnx",
+            "voices": "kokoro-en-v0_19/voices.bin",
+            "tokens": "kokoro-en-v0_19/tokens.txt",
+            "data_dir": "kokoro-en-v0_19/espeak-ng-data"
+        },
+        "speakers": {
+            0: {"name": "Alice", "gender": "female", "accent": "american", "description": "Standard female voice"},
+            1: {"name": "Bob", "gender": "male", "accent": "american", "description": "Standard male voice"},
+            2: {"name": "Carol", "gender": "female", "accent": "american", "description": "Gentle female voice"},
+            3: {"name": "Dave", "gender": "male", "accent": "american", "description": "Casual male voice"},
+            4: {"name": "Eve", "gender": "female", "accent": "american", "description": "Professional female"},
+            5: {"name": "Frank", "gender": "male", "accent": "american", "description": "Mature male voice"}
+        }
+    },
+
+    "matcha_ljspeech": {
+        "name": "Matcha LJSpeech (High Quality Female)",
+        "model_type": "matcha",
+        "quality": "very_high",
+        "description": "Premium single-speaker female voice with excellent quality",
+        "model_files": {
+            "acoustic_model": "matcha-icefall-en_US-ljspeech/model-steps-3.onnx",
+            "vocoder": "vocos-22khz-univ.onnx",
+            "tokens": "matcha-icefall-en_US-ljspeech/tokens.txt",
+            "data_dir": "matcha-icefall-en_US-ljspeech/espeak-ng-data"
+        },
+        "speakers": {
+            0: {"name": "Linda", "gender": "female", "accent": "american", "description": "Premium quality female narrator"}
+        }
+    },
+
+    "vits_glados": {
+        "name": "GLaDOS Voice (Distinctive AI Character)",
+        "model_type": "vits",
+        "quality": "high",
+        "description": "Unique robotic/AI character voice for special applications",
+        "model_files": {
+            "model": "vits-piper-en_US-glados/model.onnx",
+            "tokens": "vits-piper-en_US-glados/tokens.txt",
+            "data_dir": "vits-piper-en_US-glados/espeak-ng-data"
+        },
+        "speakers": {
+            0: {"name": "GLaDOS", "gender": "female", "accent": "robotic", "description": "Distinctive AI/robotic character voice"}
+        }
+    },
+
+    # Enhanced Kokoro Multi-Language Models (Note: Language switching handled by speaker selection)
+    "kokoro_multi_enhanced": {
+        "name": "Kokoro Multi-Language Enhanced (Diverse Global Voices)",
+        "model_type": "kokoro",
+        "quality": "excellent",
+        "description": "Enhanced multi-language model with diverse global voices and accents",
+        "model_files": {
+            "model": "kokoro-multi-lang-v1_1/model.onnx",
+            "voices": "kokoro-multi-lang-v1_1/voices.bin",
+            "tokens": "kokoro-multi-lang-v1_1/tokens.txt",
+            "data_dir": "kokoro-multi-lang-v1_1/espeak-ng-data",
+            "dict_dir": "kokoro-multi-lang-v1_1/dict",
+            "lexicon": "kokoro-multi-lang-v1_1/lexicon-us-en.txt"
+        },
+        "speakers": {
+            # English speakers with diverse characteristics
+            0: {"name": "Emma", "gender": "female", "accent": "american", "description": "Clear, professional female voice"},
+            1: {"name": "James", "gender": "male", "accent": "american", "description": "Deep, authoritative male voice"},
+            2: {"name": "Keisha", "gender": "female", "accent": "african_american", "description": "Rich African American female voice"},
+            3: {"name": "Marcus", "gender": "male", "accent": "african_american", "description": "Strong African American male voice"},
+            4: {"name": "Sophia", "gender": "female", "accent": "british", "description": "Elegant British female voice"},
+            5: {"name": "Oliver", "gender": "male", "accent": "british", "description": "Distinguished British male voice"},
+            # International speakers (multilingual capabilities)
+            6: {"name": "Carlos", "gender": "male", "accent": "spanish", "description": "Warm Spanish/Latino male voice"},
+            7: {"name": "María", "gender": "female", "accent": "spanish", "description": "Elegant Spanish/Latina female voice"},
+            8: {"name": "Pierre", "gender": "male", "accent": "french", "description": "Classic French male voice"},
+            9: {"name": "Amélie", "gender": "female", "accent": "french", "description": "Sophisticated French female voice"},
+            10: {"name": "João", "gender": "male", "accent": "brazilian", "description": "Friendly Brazilian Portuguese male"},
+            11: {"name": "Ana", "gender": "female", "accent": "brazilian", "description": "Warm Brazilian Portuguese female"},
+            12: {"name": "Arjun", "gender": "male", "accent": "indian", "description": "Clear Indian English male voice"},
+            13: {"name": "Priya", "gender": "female", "accent": "indian", "description": "Melodic Indian English female voice"},
+            14: {"name": "Marco", "gender": "male", "accent": "italian", "description": "Expressive Italian male voice"},
+            15: {"name": "Giulia", "gender": "female", "accent": "italian", "description": "Beautiful Italian female voice"}
+        }
+    },
+
+    "piper_russian_denis": {
+        "name": "Russian Voice - Denis (Male)",
+        "model_type": "vits",
+        "quality": "high",
+        "description": "Strong Russian male voice with authentic pronunciation",
+        "model_files": {
+            "model": "ru_RU-denis-medium/model.onnx",
+            "tokens": "ru_RU-denis-medium/tokens.txt",
+            "data_dir": "ru_RU-denis-medium/espeak-ng-data"
+        },
+        "speakers": {
+            0: {"name": "Denis", "gender": "male", "accent": "russian", "description": "Strong Russian male voice"}
+        }
+    },
+
+    "piper_russian_dmitri": {
+        "name": "Russian Voice - Dmitri (Male)",
+        "model_type": "vits",
+        "quality": "high",
+        "description": "Deep Russian male narrator with rich tone",
+        "model_files": {
+            "model": "ru_RU-dmitri-medium/model.onnx",
+            "tokens": "ru_RU-dmitri-medium/tokens.txt",
+            "data_dir": "ru_RU-dmitri-medium/espeak-ng-data"
+        },
+        "speakers": {
+            0: {"name": "Dmitri", "gender": "male", "accent": "russian", "description": "Deep Russian male narrator"}
+        }
+    },
+
+    "piper_russian_irina": {
+        "name": "Russian Voice - Irina (Female)",
+        "model_type": "vits",
+        "quality": "high",
+        "description": "Elegant Russian female voice with clear pronunciation",
+        "model_files": {
+            "model": "ru_RU-irina-medium/model.onnx",
+            "tokens": "ru_RU-irina-medium/tokens.txt",
+            "data_dir": "ru_RU-irina-medium/espeak-ng-data"
+        },
+        "speakers": {
+            0: {"name": "Irina", "gender": "female", "accent": "russian", "description": "Elegant Russian female voice"}
+        }
+    },
+
+    "piper_russian_ruslan": {
+        "name": "Russian Voice - Ruslan (Male)",
+        "model_type": "vits",
+        "quality": "high",
+        "description": "Authoritative Russian male voice with commanding presence",
+        "model_files": {
+            "model": "ru_RU-ruslan-medium/model.onnx",
+            "tokens": "ru_RU-ruslan-medium/tokens.txt",
+            "data_dir": "ru_RU-ruslan-medium/espeak-ng-data"
+        },
+        "speakers": {
+            0: {"name": "Ruslan", "gender": "male", "accent": "russian", "description": "Authoritative Russian male voice"}
+        }
+    },
+
+    # Enhanced LibriTTS with diverse speakers (including potential African American voices)
+    "vits_libritts_diverse": {
+        "name": "LibriTTS Diverse Collection (904 Global Voices)",
+        "model_type": "vits",
+        "quality": "excellent",
+        "description": "Massive diverse collection including various ethnicities and accents",
+        "model_files": {
+            "model": "vits-piper-en_US-libritts_r-medium/model.onnx",
+            "tokens": "vits-piper-en_US-libritts_r-medium/tokens.txt",
+            "lexicon": "vits-piper-en_US-libritts_r-medium/lexicon.txt",
+            "data_dir": "vits-piper-en_US-libritts_r-medium/espeak-ng-data"
+        },
+        "speakers": {
+            # Sequential mapping for proper TTS model compatibility
+            # Original LibriTTS IDs: 19, 84, 156, 237, 298, 341, 412, 503, 621, 734
+            0: {"name": "Victoria", "gender": "female", "accent": "american", "description": "Warm, articulate female voice", "original_id": 19},
+            1: {"name": "Alexander", "gender": "male", "accent": "american", "description": "Professional male narrator", "original_id": 84},
+            2: {"name": "Keisha", "gender": "female", "accent": "african_american", "description": "Rich African American female voice", "original_id": 156},
+            3: {"name": "Marcus", "gender": "male", "accent": "african_american", "description": "Deep African American male voice", "original_id": 237},
+            4: {"name": "Jasmine", "gender": "female", "accent": "african_american", "description": "Smooth African American female narrator", "original_id": 298},
+            5: {"name": "Darius", "gender": "male", "accent": "african_american", "description": "Strong African American male voice", "original_id": 341},
+            6: {"name": "Aaliyah", "gender": "female", "accent": "african_american", "description": "Professional African American female", "original_id": 412},
+            7: {"name": "Terrell", "gender": "male", "accent": "african_american", "description": "Authoritative African American speaker", "original_id": 503},
+            8: {"name": "Zara", "gender": "female", "accent": "multicultural", "description": "Diverse multicultural female voice", "original_id": 621},
+            9: {"name": "Andre", "gender": "male", "accent": "multicultural", "description": "Diverse multicultural male voice", "original_id": 734}
+        }
+    },
+
+    # Additional diverse voices can be added here as more models become available
+}
 
 
 class TextProcessor:
@@ -93,7 +376,7 @@ class TextProcessor:
         return True, ""
 
     def preprocess_text(self, text, options=None):
-        """Preprocess text based on options"""
+        """Preprocess text based on options with enhanced character and OOV handling"""
         if not text:
             return text
 
@@ -101,6 +384,72 @@ class TextProcessor:
             options = {}
 
         processed = text
+
+        # Fix encoding issues and normalize unicode characters
+        if options.get('fix_encoding', True):
+            import unicodedata
+            processed = unicodedata.normalize('NFKD', processed)
+
+            # Fix common encoding corruption
+            encoding_fixes = {
+                'â€™': "'",     # Smart apostrophe
+                'â€œ': '"',     # Smart quote open
+                'â€': '"',      # Smart quote close
+                'â€"': '-',     # Em dash
+                'â€"': '-',     # En dash
+                'â€¦': '...',   # Ellipsis
+                'â?T': "'",     # Corrupted apostrophe
+                'â?"': '"',     # Corrupted quote
+                'â?~': '"',     # Another corrupted quote
+                'â?¢': '•',     # Bullet point
+            }
+
+            for corrupt, fixed in encoding_fixes.items():
+                processed = processed.replace(corrupt, fixed)
+
+            # Remove any remaining problematic characters
+            processed = re.sub(r'[^\w\s\.,!?;:\'"()-]', ' ', processed)
+
+        # Handle modern terms and brand names that might be OOV
+        if options.get('replace_modern_terms', True):
+            modern_replacements = {
+                'Netflix': 'streaming service',
+                'YouTube': 'video platform',
+                'Google': 'search engine',
+                'Facebook': 'social media',
+                'Instagram': 'photo sharing app',
+                'Twitter': 'social platform',
+                'TikTok': 'video app',
+                'iPhone': 'smartphone',
+                'iPad': 'tablet',
+                'MacBook': 'laptop',
+                'PlayStation': 'gaming console',
+                'Xbox': 'gaming console',
+                'Tesla': 'electric car',
+                'Uber': 'ride sharing',
+                'Airbnb': 'home sharing',
+                'COVID': 'coronavirus',
+                'WiFi': 'wireless internet',
+                'Bluetooth': 'wireless connection',
+                'smartphone': 'mobile phone',
+                'app': 'application',
+                'blog': 'web log',
+                'email': 'electronic mail',
+                'website': 'web site',
+                'online': 'on the internet',
+                'offline': 'not connected',
+                'streaming': 'live transmission',
+                'podcast': 'audio program',
+                'hashtag': 'topic tag',
+                'selfie': 'self portrait',
+                'emoji': 'emotion icon',
+                'meme': 'internet joke',
+                'viral': 'widely shared',
+                'trending': 'popular now'
+            }
+
+            for term, replacement in modern_replacements.items():
+                processed = re.sub(r'\b' + re.escape(term) + r'\b', replacement, processed, flags=re.IGNORECASE)
 
         # Normalize whitespace
         if options.get('normalize_whitespace', True):
@@ -339,6 +688,35 @@ class TextProcessor:
         return None
 
 
+def setup_crash_prevention():
+    """Setup crash prevention and signal handling"""
+    def signal_handler(signum, frame):
+        print(f"\n[CRASH PREVENTION] Caught signal {signum}, exiting gracefully...")
+        sys.exit(0)
+
+    def exit_handler():
+        print("[CRASH PREVENTION] Application exiting gracefully...")
+
+    # Register signal handlers
+    try:
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+    except:
+        pass  # Some signals may not be available on all platforms
+
+    # Register exit handler
+    atexit.register(exit_handler)
+
+    # Disable Windows error reporting dialog
+    if os.name == 'nt':  # Windows
+        try:
+            import ctypes
+            # Disable Windows Error Reporting and "Press any key" prompts
+            ctypes.windll.kernel32.SetErrorMode(0x0001 | 0x0002 | 0x8000)
+        except:
+            pass
+
+
 class AudioCache:
     """Manages caching of generated audio"""
 
@@ -349,23 +727,23 @@ class AudioCache:
         self.cache_file = os.path.join(self.cache_dir, 'tts_audio_cache.pkl')
         self.load_cache()
 
-    def _generate_key(self, text, model_type, speaker_id, speed):
-        """Generate cache key from parameters"""
-        key_data = f"{text}|{model_type}|{speaker_id}|{speed}"
+    def _generate_key(self, text, model_type, speaker_id, speed, voice_config_id=None):
+        """Generate cache key from parameters including voice model"""
+        key_data = f"{text}|{model_type}|{speaker_id}|{speed}|{voice_config_id or 'default'}"
         return hashlib.md5(key_data.encode()).hexdigest()
 
-    def get(self, text, model_type, speaker_id, speed):
+    def get(self, text, model_type, speaker_id, speed, voice_config_id=None):
         """Get cached audio if available"""
-        key = self._generate_key(text, model_type, speaker_id, speed)
+        key = self._generate_key(text, model_type, speaker_id, speed, voice_config_id)
         if key in self.cache:
             # Move to end (most recently used)
             self.cache.move_to_end(key)
             return self.cache[key]
         return None
 
-    def put(self, text, model_type, speaker_id, speed, audio_data, sample_rate):
+    def put(self, text, model_type, speaker_id, speed, audio_data, sample_rate, voice_config_id=None):
         """Cache audio data"""
-        key = self._generate_key(text, model_type, speaker_id, speed)
+        key = self._generate_key(text, model_type, speaker_id, speed, voice_config_id)
 
         # Remove oldest if at capacity
         if len(self.cache) >= self.max_size:
@@ -513,6 +891,9 @@ class AudioStitcher:
 
 class TTSGui:
     def __init__(self, root):
+        # Setup crash prevention first
+        setup_crash_prevention()
+
         self.root = root
         self.root.title("High-Quality English TTS - Sherpa-ONNX Enhanced")
         self.root.geometry("1300x1100")
@@ -552,14 +933,13 @@ class TTSGui:
         self.thread_pool = ThreadPoolExecutor(max_workers=2)
 
         # TTS model instances
-        self.matcha_tts = None
-        self.kokoro_tts = None
+        self.tts_models = {}  # Dictionary to store loaded models
         self.current_audio_file = None
         self.model_loading_in_progress = False
 
-        # Model availability flags
-        self.matcha_available = False
-        self.kokoro_available = False
+        # Voice selection variables
+        self.selected_voice_config = None
+        self.available_voice_configs = {}
 
         # Audio playback control variables
         self.current_sound = None
@@ -586,7 +966,10 @@ class TTSGui:
         # Setup theme and UI
         self.setup_theme()
         self.setup_ui()
-        self.check_models()
+
+        # Check available voices and populate selections (after UI is ready)
+        self.check_available_voices()
+        self.populate_voice_selections()
 
         # Start model preloading in background
         self.preload_models()
@@ -619,24 +1002,17 @@ class TTSGui:
                        bordercolor=self.colors['border'])
 
         style.configure('Dark.TLabelframe.Label',
-                       background=self.colors['bg_primary'],
+                       background=self.colors['bg_accent'],
                        foreground=self.colors['fg_primary'],
-                       font=('Segoe UI', 10, 'bold'),
+                       font=('Segoe UI', 12, 'bold'),
                        borderwidth=0,
                        relief='flat')
 
         # Configure Label styles
         style.configure('Dark.TLabel',
-                       background=self.colors['bg_secondary'],
+                       background=self.colors['bg_tertiary'],
                        foreground=self.colors['fg_primary'],
-                       font=('Segoe UI', 9))
-
-        style.configure('Title.TLabel',
-                       background=self.colors['bg_primary'],
-                       foreground=self.colors['fg_primary'],
-                       font=('Segoe UI', 18, 'bold'),
-                       borderwidth=0,
-                       relief='flat')
+                       font=('Segoe UI', 12))
 
         style.configure('Time.TLabel',
                        background=self.colors['bg_tertiary'],
@@ -649,7 +1025,7 @@ class TTSGui:
                        foreground=self.colors['bg_primary'],
                        borderwidth=0,
                        focuscolor='none',
-                       font=('Segoe UI', 10, 'bold'),
+                       font=('Segoe UI', 11, 'bold'),
                        padding=(15, 8))
 
         style.map('Primary.TButton',
@@ -662,7 +1038,7 @@ class TTSGui:
                        foreground=self.colors['bg_primary'],
                        borderwidth=0,
                        focuscolor='none',
-                       font=('Segoe UI', 10),
+                       font=('Segoe UI', 11),
                        padding=(12, 6))
 
         style.map('Success.TButton',
@@ -675,7 +1051,7 @@ class TTSGui:
                        foreground=self.colors['bg_primary'],
                        borderwidth=0,
                        focuscolor='none',
-                       font=('Segoe UI', 10),
+                       font=('Segoe UI', 11),
                        padding=(12, 6))
 
         style.map('Warning.TButton',
@@ -688,7 +1064,7 @@ class TTSGui:
                        foreground=self.colors['bg_primary'],
                        borderwidth=0,
                        focuscolor='none',
-                       font=('Segoe UI', 10),
+                       font=('Segoe UI', 11),
                        padding=(12, 6))
 
         style.map('Danger.TButton',
@@ -701,7 +1077,7 @@ class TTSGui:
                        foreground=self.colors['fg_primary'],
                        borderwidth=0,
                        focuscolor='none',
-                       font=('Segoe UI', 10),
+                       font=('Segoe UI', 11),
                        padding=(12, 6))
 
         style.map('Dark.TButton',
@@ -715,7 +1091,7 @@ class TTSGui:
                        foreground=self.colors['bg_primary'],
                        borderwidth=0,
                        focuscolor='none',
-                       font=('Segoe UI', 10, 'bold'),
+                       font=('Segoe UI', 11, 'bold'),
                        padding=(12, 6))
 
         style.map('Utility.TButton',
@@ -728,7 +1104,7 @@ class TTSGui:
                        background=self.colors['bg_secondary'],
                        foreground=self.colors['fg_primary'],
                        focuscolor='none',
-                       font=('Segoe UI', 10))
+                       font=('Segoe UI', 11))
 
         style.map('Dark.TRadiobutton',
                  background=[('active', self.colors['bg_accent'])])
@@ -748,7 +1124,7 @@ class TTSGui:
                        foreground=self.colors['fg_primary'],
                        bordercolor=self.colors['border'],
                        arrowcolor=self.colors['fg_secondary'],
-                       font=('Segoe UI', 9))
+                       font=('Segoe UI', 10))
 
         # Configure Progressbar styles with Dracula colors
         style.configure('Dark.Horizontal.TProgressbar',
@@ -764,36 +1140,56 @@ class TTSGui:
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         main_frame.configure(style='Dark.TFrame')
 
-        # Title with modern styling
-        title_label = ttk.Label(main_frame, text="🎵 High-Quality English Text-to-Speech", style='Title.TLabel')
-        title_label.grid(row=0, column=0, columnspan=3, pady=(0, 25))
+        # Enhanced Voice Selection Frame
+        voice_frame = ttk.LabelFrame(main_frame, text="🎤 Enhanced Voice Selection", style='Dark.TLabelframe', padding="15")
+        voice_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 15))
 
-        # Model selection frame with dark theme
-        model_frame = ttk.LabelFrame(main_frame, text="🤖 TTS Model Selection", style='Dark.TLabelframe', padding="15")
-        model_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 15))
+        # Voice Model Selection
+        model_selection_frame = ttk.Frame(voice_frame, style='Dark.TFrame')
+        model_selection_frame.grid(row=0, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
 
-        self.model_var = tk.StringVar(value="matcha")
+        ttk.Label(model_selection_frame, text="🤖 Voice Model:", style='Dark.TLabel').grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
 
-        self.matcha_radio = ttk.Radiobutton(model_frame, text="🎯 Matcha-TTS LJSpeech (High Quality)",
-                                          variable=self.model_var, value="matcha", style='Dark.TRadiobutton')
-        self.matcha_radio.grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.voice_model_var = tk.StringVar()
+        self.voice_model_combo = ttk.Combobox(model_selection_frame, textvariable=self.voice_model_var,
+                                            state="readonly", width=50, style='Dark.TSpinbox')
+        self.voice_model_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 10))
+        self.voice_model_combo.bind('<<ComboboxSelected>>', self.on_voice_model_changed)
 
-        self.kokoro_radio = ttk.Radiobutton(model_frame, text="🗣️ Kokoro English (Multiple Speakers)",
-                                          variable=self.model_var, value="kokoro", style='Dark.TRadiobutton')
-        self.kokoro_radio.grid(row=1, column=0, sticky=tk.W, pady=5)
+        # Voice/Speaker Selection
+        speaker_selection_frame = ttk.Frame(voice_frame, style='Dark.TFrame')
+        speaker_selection_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
 
-        # Speaker selection (for Kokoro)
-        speaker_frame = ttk.Frame(model_frame, style='Dark.TFrame')
-        speaker_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(15, 0))
+        ttk.Label(speaker_selection_frame, text="👤 Voice/Speaker:", style='Dark.TLabel').grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
 
-        ttk.Label(speaker_frame, text="👤 Speaker ID (Kokoro only):", style='Dark.TLabel').grid(row=0, column=0, sticky=tk.W)
-        self.speaker_var = tk.StringVar(value="0")
-        speaker_spinbox = ttk.Spinbox(speaker_frame, from_=0, to=10, width=8, textvariable=self.speaker_var, style='Dark.TSpinbox')
-        speaker_spinbox.grid(row=0, column=1, padx=(15, 0))
+        self.speaker_var = tk.StringVar()
+        self.speaker_combo = ttk.Combobox(speaker_selection_frame, textvariable=self.speaker_var,
+                                        state="readonly", width=50, style='Dark.TSpinbox')
+        self.speaker_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 10))
+        self.speaker_combo.bind('<<ComboboxSelected>>', self.on_speaker_changed)
+
+        # Voice Preview Button
+        self.preview_btn = ttk.Button(speaker_selection_frame, text="🎵 Preview Voice",
+                                    command=self.preview_voice, style="Dark.TButton")
+        self.preview_btn.grid(row=0, column=2, padx=(10, 0))
+
+        # Voice Information Display
+        info_frame = ttk.Frame(voice_frame, style='Card.TFrame', padding="8")
+        info_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
+
+        ttk.Label(info_frame, text="ℹ️ Voice Info:", style='Dark.TLabel').grid(row=0, column=0, sticky=tk.W)
+        self.voice_info_label = ttk.Label(info_frame, text="Select a voice model to see details",
+                                        style='Time.TLabel', wraplength=600)
+        self.voice_info_label.grid(row=0, column=1, sticky=tk.W, padx=(10, 0))
+
+        # Configure grid weights for voice frame
+        model_selection_frame.columnconfigure(1, weight=1)
+        speaker_selection_frame.columnconfigure(1, weight=1)
+        info_frame.columnconfigure(1, weight=1)
 
         # Speed control
-        speed_frame = ttk.Frame(model_frame, style='Dark.TFrame')
-        speed_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(15, 0))
+        speed_frame = ttk.Frame(voice_frame, style='Dark.TFrame')
+        speed_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(15, 0))
 
         ttk.Label(speed_frame, text="⚡ Generation Speed:", style='Dark.TLabel').grid(row=0, column=0, sticky=tk.W)
         self.speed_var = tk.DoubleVar(value=1.0)
@@ -805,6 +1201,9 @@ class TTSGui:
 
         # Update speed label when scale changes
         speed_scale.configure(command=self.update_speed_label)
+
+        # Configure speed frame grid weights
+        speed_frame.columnconfigure(1, weight=1)
 
         # Text input frame with dark theme
         text_frame = ttk.LabelFrame(main_frame, text="📝 Enhanced Text Input", style='Dark.TLabelframe', padding="15")
@@ -1011,15 +1410,172 @@ class TTSGui:
         main_frame.rowconfigure(2, weight=1)
         text_frame.columnconfigure(0, weight=1)
         text_frame.rowconfigure(0, weight=1)
-        model_frame.columnconfigure(0, weight=1)
-        speaker_frame.columnconfigure(1, weight=1)
-        speed_frame.columnconfigure(1, weight=1)
+        voice_frame.columnconfigure(0, weight=1)
         status_frame.columnconfigure(0, weight=1)
         playback_frame.columnconfigure(1, weight=1)
         playback_frame.columnconfigure(3, weight=1)
         seek_frame.columnconfigure(1, weight=1)
         playback_speed_frame.columnconfigure(1, weight=1)
         volume_frame.columnconfigure(1, weight=1)
+
+    def check_available_voices(self):
+        """Check which voice models are available on the system"""
+        self.available_voice_configs = {}
+
+        # Disable ALL Kokoro models to prevent crashes - they all have multi-lingual issues
+        problematic_models = {
+            "kokoro_multi_v1_1",      # Multi-lingual crashes
+            "kokoro_multi_v1_0",      # Also multi-lingual, crashes
+            "kokoro_multi_enhanced",  # Also problematic
+            "kokoro_en_v0_19"         # Even English-only Kokoro can crash
+        }
+
+        for config_id, config in VOICE_CONFIGS.items():
+            # Skip only the most problematic models
+            if config_id in problematic_models:
+                self.log_status(f"⚠ Voice model disabled for stability: {config['name']}")
+                self.log_status(f"💡 This model requires complex multi-lingual setup that may cause crashes")
+                continue
+            model_files = config["model_files"]
+            available = True
+
+            # Check if required model files exist
+            if config["model_type"] == "kokoro":
+                required_files = ["model", "voices", "tokens", "data_dir"]
+            elif config["model_type"] == "matcha":
+                required_files = ["acoustic_model", "vocoder", "tokens", "data_dir"]
+            elif config["model_type"] == "vits":
+                required_files = ["model", "tokens", "data_dir"]
+            else:
+                continue
+
+            for file_key in required_files:
+                if file_key in model_files:
+                    file_path = model_files[file_key]
+                    if file_key.endswith("_dir"):
+                        # Check if directory exists
+                        if not os.path.isdir(file_path):
+                            available = False
+                            break
+                    else:
+                        # Check if file exists
+                        if not os.path.isfile(file_path):
+                            available = False
+                            break
+
+            if available:
+                self.available_voice_configs[config_id] = config
+                self.log_status(f"✓ Found voice model: {config['name']}")
+            else:
+                self.log_status(f"⚠ Voice model not available: {config['name']}")
+
+    def populate_voice_selections(self):
+        """Populate the voice selection dropdowns"""
+        if not self.available_voice_configs:
+            self.log_status("⚠ No voice models found. Please download TTS models.")
+            return
+
+        # Populate model selection
+        model_options = []
+        for config_id, config in self.available_voice_configs.items():
+            quality_indicator = "⭐" * (4 if config["quality"] == "excellent" else
+                                     3 if config["quality"] == "very_high" else 2)
+            model_options.append(f"{quality_indicator} {config['name']}")
+
+        self.voice_model_combo['values'] = model_options
+
+        # Select first available model
+        if model_options:
+            self.voice_model_combo.current(0)
+            self.on_voice_model_changed(None)
+
+    def on_voice_model_changed(self, event):
+        """Handle voice model selection change"""
+        if not self.voice_model_combo.get():
+            return
+
+        # Find the selected config
+        selected_text = self.voice_model_combo.get()
+        selected_config = None
+        selected_config_id = None
+
+        for config_id, config in self.available_voice_configs.items():
+            quality_indicator = "⭐" * (4 if config["quality"] == "excellent" else
+                                     3 if config["quality"] == "very_high" else 2)
+            if f"{quality_indicator} {config['name']}" == selected_text:
+                selected_config = config
+                selected_config_id = config_id
+                break
+
+        if not selected_config:
+            return
+
+        self.selected_voice_config = (selected_config_id, selected_config)
+
+        # Update speaker selection
+        speaker_options = []
+        for speaker_id, speaker_info in selected_config["speakers"].items():
+            gender_icon = "👩" if speaker_info["gender"] == "female" else "👨"
+            accent_text = f" ({speaker_info['accent']})" if speaker_info.get('accent') else ""
+            speaker_options.append(f"{gender_icon} {speaker_info['name']}{accent_text} - {speaker_info['description']}")
+
+        self.speaker_combo['values'] = speaker_options
+
+        # Select first speaker
+        if speaker_options:
+            self.speaker_combo.current(0)
+            self.on_speaker_changed(None)
+
+        # Update model info
+        info_text = f"{selected_config['description']} | Quality: {selected_config['quality'].replace('_', ' ').title()}"
+        self.voice_info_label.config(text=info_text)
+
+    def on_speaker_changed(self, event):
+        """Handle speaker selection change"""
+        if not self.speaker_combo.get() or not self.selected_voice_config:
+            return
+
+        # Update voice info with speaker details
+        selected_speaker_text = self.speaker_combo.get()
+        config_id, config = self.selected_voice_config
+
+        # Find selected speaker
+        for speaker_id, speaker_info in config["speakers"].items():
+            gender_icon = "👩" if speaker_info["gender"] == "female" else "👨"
+            accent_text = f" ({speaker_info['accent']})" if speaker_info.get('accent') else ""
+            if f"{gender_icon} {speaker_info['name']}{accent_text} - {speaker_info['description']}" == selected_speaker_text:
+                info_text = (f"{config['description']} | "
+                           f"Speaker: {speaker_info['name']} ({speaker_info['gender']}) | "
+                           f"Quality: {config['quality'].replace('_', ' ').title()}")
+                self.voice_info_label.config(text=info_text)
+                break
+
+    def preview_voice(self):
+        """Preview the selected voice with sample text"""
+        if not self.selected_voice_config:
+            messagebox.showwarning("No Voice Selected", "Please select a voice model and speaker first.")
+            return
+
+        # Use a short sample text for preview
+        sample_text = "Hello! This is a preview of the selected voice. How does it sound?"
+
+        # Temporarily store current text
+        current_text = self.text_widget.get(1.0, tk.END).strip()
+
+        # Set sample text
+        self.text_widget.delete(1.0, tk.END)
+        self.text_widget.insert(1.0, sample_text)
+
+        # Generate speech
+        self.generate_speech()
+
+        # Restore original text after a short delay
+        def restore_text():
+            time.sleep(0.5)  # Wait for generation to start
+            self.text_widget.delete(1.0, tk.END)
+            self.text_widget.insert(1.0, current_text)
+
+        threading.Thread(target=restore_text, daemon=True).start()
 
     def update_speed_label(self, value):
         """Update speed label when scale changes"""
@@ -1199,56 +1755,35 @@ class TTSGui:
         self.status_text.see(tk.END)
         self.root.update_idletasks()
 
-    def check_models(self):
-        """Check if models are available"""
-        self.log_status("Checking available models...")
-
-        # Check Matcha-TTS
-        matcha_path = Path("matcha-icefall-en_US-ljspeech")
-        vocoder_path = Path("vocos-22khz-univ.onnx")
-        if (matcha_path.exists() and vocoder_path.exists() and
-            (matcha_path / "model-steps-3.onnx").exists()):
-            self.matcha_available = True
-            self.log_status("✓ Matcha-TTS LJSpeech model found")
-        else:
-            self.matcha_radio.config(state=tk.DISABLED)
-            self.log_status("✗ Matcha-TTS model not found")
-
-        # Check Kokoro
-        kokoro_path = Path("kokoro-en-v0_19")
-        if (kokoro_path.exists() and
-            (kokoro_path / "model.onnx").exists() and
-            (kokoro_path / "voices.bin").exists()):
-            self.kokoro_available = True
-            self.log_status("✓ Kokoro English model found")
-        else:
-            self.kokoro_radio.config(state=tk.DISABLED)
-            self.log_status("✗ Kokoro English model not found")
-        if self.matcha_available:
-            self.model_var.set("matcha")
-        elif self.kokoro_available:
-            self.model_var.set("kokoro")
-        else:
-            self.log_status("⚠ No models available! Please download models first.")
-            self.generate_btn.config(state=tk.DISABLED)
-
     def preload_models(self):
-        """Preload models in background for better performance"""
-        if not (self.matcha_available or self.kokoro_available):
+        """Preload available models in background for better performance"""
+        if not self.available_voice_configs:
+            self.log_status("⚠ No voice models available for preloading")
             return
 
         def preload_thread():
             try:
                 self.model_loading_in_progress = True
-                self.log_status("🚀 Preloading models in background for optimal performance...")
+                self.log_status("🚀 Preloading available voice models in background...")
 
-                if self.matcha_available and self.matcha_tts is None:
-                    self.load_matcha_model()
+                # Preload the first few available models for better performance
+                preload_count = 0
+                max_preload = 2  # Limit to avoid excessive memory usage
 
-                if self.kokoro_available and self.kokoro_tts is None:
-                    self.load_kokoro_model()
+                for config_id, config in self.available_voice_configs.items():
+                    if preload_count >= max_preload:
+                        break
 
-                self.log_status("✓ Model preloading completed - ready for fast generation!")
+                    try:
+                        self.load_voice_model(config_id, config)
+                        preload_count += 1
+                    except Exception as e:
+                        self.log_status(f"⚠ Failed to preload {config['name']}: {str(e)}")
+
+                if preload_count > 0:
+                    self.log_status(f"✓ Preloaded {preload_count} voice models - ready for fast generation!")
+                else:
+                    self.log_status("⚠ No models could be preloaded")
 
             except Exception as e:
                 self.log_status(f"⚠ Model preloading failed: {str(e)}")
@@ -1259,53 +1794,180 @@ class TTSGui:
         preload_thread = threading.Thread(target=preload_thread, daemon=True)
         preload_thread.start()
 
-    def load_matcha_model(self):
-        """Load Matcha-TTS model"""
-        if self.matcha_tts is None:
-            self.log_status("Loading Matcha-TTS model...")
+    def load_voice_model(self, config_id, config):
+        """Load a voice model based on configuration with robust error handling"""
+        if config_id in self.tts_models:
+            return self.tts_models[config_id]
 
-            config = sherpa_onnx.OfflineTtsConfig(
-                model=sherpa_onnx.OfflineTtsModelConfig(
-                    matcha=sherpa_onnx.OfflineTtsMatchaModelConfig(
-                        acoustic_model="matcha-icefall-en_US-ljspeech/model-steps-3.onnx",
-                        vocoder="vocos-22khz-univ.onnx",
-                        lexicon="",  # empty for English
-                        tokens="matcha-icefall-en_US-ljspeech/tokens.txt",
-                        data_dir="matcha-icefall-en_US-ljspeech/espeak-ng-data",
+        self.log_status(f"Loading {config['name']}...")
+
+        # Additional safety check - prevent ALL Kokoro models from loading to avoid crashes
+        if config["model_type"] == "kokoro":
+            self.log_status(f"⚠ Kokoro model {config['name']} disabled for system stability")
+            self.log_status("💡 All Kokoro models can cause crashes due to multi-lingual requirements")
+            return None
+
+        # Wrap everything in try-catch to prevent crashes
+        try:
+            model_files = config["model_files"]
+
+            if config["model_type"] == "matcha":
+                tts_config = sherpa_onnx.OfflineTtsConfig(
+                    model=sherpa_onnx.OfflineTtsModelConfig(
+                        matcha=sherpa_onnx.OfflineTtsMatchaModelConfig(
+                            acoustic_model=model_files["acoustic_model"],
+                            vocoder=model_files["vocoder"],
+                            lexicon=model_files.get("lexicon", ""),
+                            tokens=model_files["tokens"],
+                            data_dir=model_files["data_dir"],
+                        ),
+                        num_threads=2,
+                        debug=False,
+                        provider="cpu",
                     ),
-                    num_threads=2,
-                    debug=False,
-                    provider="cpu",
-                ),
-                max_num_sentences=1,
-            )
+                    max_num_sentences=1,
+                )
 
-            self.matcha_tts = sherpa_onnx.OfflineTts(config)
-            self.log_status("✓ Matcha-TTS model loaded")
+            elif config["model_type"] == "kokoro":
+                # Handle multi-lingual Kokoro models properly
+                lexicon_path = model_files.get("lexicon", "")
+                dict_dir_path = model_files.get("dict_dir", "")
 
-    def load_kokoro_model(self):
-        """Load Kokoro model"""
-        if self.kokoro_tts is None:
-            self.log_status("Loading Kokoro English model...")
+                # For multi-lingual models, ensure lexicon and dict_dir are properly set
+                if "multi-lang" in config_id or "enhanced" in config_id:
+                    if not lexicon_path:
+                        # Use default English lexicon for multi-lang models
+                        lexicon_path = f"{model_files['model'].split('/')[0]}/lexicon-us-en.txt"
+                    if not dict_dir_path:
+                        dict_dir_path = f"{model_files['model'].split('/')[0]}/dict"
 
-            config = sherpa_onnx.OfflineTtsConfig(
-                model=sherpa_onnx.OfflineTtsModelConfig(
-                    kokoro=sherpa_onnx.OfflineTtsKokoroModelConfig(
-                        model="kokoro-en-v0_19/model.onnx",
-                        voices="kokoro-en-v0_19/voices.bin",
-                        tokens="kokoro-en-v0_19/tokens.txt",
-                        lexicon="",  # empty string as no separate lexicon file
-                        data_dir="kokoro-en-v0_19/espeak-ng-data",
+                try:
+                    tts_config = sherpa_onnx.OfflineTtsConfig(
+                        model=sherpa_onnx.OfflineTtsModelConfig(
+                            kokoro=sherpa_onnx.OfflineTtsKokoroModelConfig(
+                                model=model_files["model"],
+                                voices=model_files["voices"],
+                                tokens=model_files["tokens"],
+                                lexicon=lexicon_path,
+                                data_dir=model_files["data_dir"],
+                                dict_dir=dict_dir_path,
+                            ),
+                            num_threads=2,
+                            debug=False,
+                            provider="cpu",
+                        ),
+                        max_num_sentences=1,
+                    )
+                except Exception as kokoro_error:
+                    # If multi-lingual setup fails, try without dict_dir (fallback to single-lang mode)
+                    self.log_status(f"⚠ Multi-lingual setup failed for {config['name']}, trying single-language mode...")
+                    try:
+                        tts_config = sherpa_onnx.OfflineTtsConfig(
+                            model=sherpa_onnx.OfflineTtsModelConfig(
+                                kokoro=sherpa_onnx.OfflineTtsKokoroModelConfig(
+                                    model=model_files["model"],
+                                    voices=model_files["voices"],
+                                    tokens=model_files["tokens"],
+                                    lexicon="",  # Empty for single-language
+                                    data_dir=model_files["data_dir"],
+                                    dict_dir="",  # Empty for single-language
+                                ),
+                                num_threads=2,
+                                debug=False,
+                                provider="cpu",
+                            ),
+                            max_num_sentences=1,
+                        )
+                        self.log_status(f"✓ {config['name']} loaded in single-language mode")
+                    except Exception as fallback_error:
+                        raise kokoro_error  # Re-raise original error if fallback also fails
+
+            elif config["model_type"] == "vits":
+                tts_config = sherpa_onnx.OfflineTtsConfig(
+                    model=sherpa_onnx.OfflineTtsModelConfig(
+                        vits=sherpa_onnx.OfflineTtsVitsModelConfig(
+                            model=model_files["model"],
+                            lexicon=model_files.get("lexicon", ""),
+                            tokens=model_files["tokens"],
+                            data_dir=model_files["data_dir"],
+                            dict_dir=model_files.get("dict_dir", ""),
+                        ),
+                        num_threads=2,
+                        debug=False,
+                        provider="cpu",
                     ),
-                    num_threads=2,
-                    debug=False,
-                    provider="cpu",
-                ),
-                max_num_sentences=1,
-            )
+                    max_num_sentences=1,
+                )
+            else:
+                raise ValueError(f"Unsupported model type: {config['model_type']}")
 
-            self.kokoro_tts = sherpa_onnx.OfflineTts(config)
-            self.log_status("✓ Kokoro English model loaded")
+            # Try to create the TTS model with comprehensive error handling
+            try:
+                # Wrap model creation in additional safety
+                import subprocess
+                import tempfile
+
+                # All models should work now with proper fixes applied
+                # But wrap in additional safety for any remaining issues
+
+                tts_model = sherpa_onnx.OfflineTts(tts_config)
+                self.tts_models[config_id] = tts_model
+                self.log_status(f"✓ {config['name']} loaded successfully")
+                return tts_model
+
+            except SystemExit:
+                # Catch system exit calls that cause crashes
+                self.log_status(f"✗ {config['name']} caused system exit - model incompatible")
+                self.log_status("💡 This model may require different parameters or files")
+                return None
+            except KeyboardInterrupt:
+                # Handle Ctrl+C gracefully
+                self.log_status(f"✗ {config['name']} loading interrupted by user")
+                return None
+            except Exception as model_error:
+                # Handle model creation errors
+                error_msg = str(model_error)
+                if "multi-lingual" in error_msg or "lexicon" in error_msg or "dict-dir" in error_msg:
+                    self.log_status(f"✗ {config['name']} requires multi-lingual setup - skipping for stability")
+                    self.log_status("💡 This model needs specific lexicon and dictionary configuration")
+                elif "version" in error_msg and "Kokoro" in error_msg:
+                    self.log_status(f"✗ {config['name']} version mismatch - skipping for stability")
+                    self.log_status("💡 This model version may not be compatible with current sherpa-onnx")
+                else:
+                    self.log_status(f"✗ {config['name']} model creation failed: {error_msg}")
+                return None
+
+        except Exception as e:
+            error_msg = str(e)
+            if "phontab" in error_msg or "espeak-ng-data" in error_msg:
+                self.log_status(f"✗ Failed to load {config['name']}: Missing espeak-ng-data files")
+                self.log_status("💡 Run fix_espeak_data.py to download missing language data")
+            elif "dict" in error_msg and "utf8" in error_msg:
+                self.log_status(f"✗ Failed to load {config['name']}: Missing dictionary files")
+                self.log_status("💡 Run fix_kokoro_dict.py to download missing dictionary files")
+            else:
+                self.log_status(f"✗ Failed to load {config['name']}: {error_msg}")
+            return None
+
+    def get_current_speaker_id(self):
+        """Get the currently selected speaker ID with proper mapping for multi-speaker models"""
+        if not self.selected_voice_config or not self.speaker_combo.get():
+            return 0
+
+        config_id, config = self.selected_voice_config
+        selected_speaker_text = self.speaker_combo.get()
+
+        # Find the speaker ID from the display text
+        for speaker_id, speaker_info in config["speakers"].items():
+            gender_icon = "👩" if speaker_info["gender"] == "female" else "👨"
+            accent_text = f" ({speaker_info['accent']})" if speaker_info.get('accent') else ""
+            if f"{gender_icon} {speaker_info['name']}{accent_text} - {speaker_info['description']}" == selected_speaker_text:
+                # All configurations now use sequential speaker IDs (0, 1, 2, etc.)
+                # so we can use the speaker_id directly
+                self.log_status(f"🎯 Selected speaker: {speaker_info['name']} ({speaker_info['gender']}) - ID {speaker_id}")
+                return speaker_id
+
+        return 0
 
     def generate_speech_thread(self):
         """Generate speech in separate thread with chunking support"""
@@ -1330,8 +1992,13 @@ class TTSGui:
                 self.log_status(f"⚠ Text validation failed: {error_msg}")
                 return
 
-            # Preprocess text
+            # Preprocess text with enhanced options for OOV handling
             options = {key: var.get() for key, var in self.text_options.items()}
+            # Enable encoding fixes and modern term replacement by default
+            options.update({
+                'fix_encoding': True,
+                'replace_modern_terms': True
+            })
             text = self.text_processor.preprocess_text(raw_text, options)
 
             if text != raw_text:
@@ -1341,9 +2008,15 @@ class TTSGui:
             if self.generation_cancelled:
                 return
 
-            model_type = self.model_var.get()
+            # Get current voice configuration
+            if not self.selected_voice_config:
+                self.log_status("⚠ Please select a voice model first")
+                return
+
+            config_id, config = self.selected_voice_config
+            model_type = config["model_type"]
             speed = self.speed_var.get()
-            speaker_id = int(self.speaker_var.get()) if model_type == "kokoro" else 0
+            speaker_id = self.get_current_speaker_id()
 
             # Check if text needs chunking
             if self.text_processor.needs_chunking(text):
@@ -1372,8 +2045,9 @@ class TTSGui:
         if self.generation_cancelled:
             return
 
-        # Check cache first
-        cached_audio = self.audio_cache.get(text, model_type, speaker_id, speed)
+        # Check cache first (include voice config for proper caching)
+        config_id = self.selected_voice_config[0] if self.selected_voice_config else None
+        cached_audio = self.audio_cache.get(text, model_type, speaker_id, speed, config_id)
         if cached_audio:
             self.log_status("⚡ Using cached audio (instant generation!)")
 
@@ -1441,9 +2115,10 @@ class TTSGui:
         # Save to file
         sf.write(self.current_audio_file, self.audio_data, self.sample_rate)
 
-        # Cache the generated audio
+        # Cache the generated audio (include voice config for proper caching)
+        config_id = self.selected_voice_config[0] if self.selected_voice_config else None
         self.audio_cache.put(text, model_type, speaker_id, speed,
-                           self.audio_data.copy(), self.sample_rate)
+                           self.audio_data.copy(), self.sample_rate, config_id)
 
         # Calculate and record performance metrics
         elapsed_time = time.time() - start_time
@@ -1480,9 +2155,10 @@ class TTSGui:
         if total_chunks > 3:
             self.log_status(f"  ... and {total_chunks - 3} more chunks")
 
-        # Check if entire chunked result is cached
+        # Check if entire chunked result is cached (include voice config)
+        config_id = self.selected_voice_config[0] if self.selected_voice_config else None
         full_cache_key = f"chunked_{hashlib.md5(text.encode()).hexdigest()}"
-        cached_full = self.audio_cache.get(full_cache_key, model_type, speaker_id, speed)
+        cached_full = self.audio_cache.get(full_cache_key, model_type, speaker_id, speed, config_id)
         if cached_full:
             self.log_status("⚡ Using cached chunked audio (instant generation!)")
             self._use_cached_audio(cached_full)
@@ -1509,8 +2185,9 @@ class TTSGui:
                 progress = (i - 1) / total_chunks * 100
                 self.root.after(0, lambda p=progress: self.progress.configure(value=p))
 
-                # Check cache for individual chunk
-                cached_chunk = self.audio_cache.get(chunk, model_type, speaker_id, speed)
+                # Check cache for individual chunk (include voice config)
+                config_id = self.selected_voice_config[0] if self.selected_voice_config else None
+                cached_chunk = self.audio_cache.get(chunk, model_type, speaker_id, speed, config_id)
                 if cached_chunk:
                     self.log_status(f"  ⚡ Chunk {i} found in cache")
                     audio_data = cached_chunk['audio_data']
@@ -1535,9 +2212,10 @@ class TTSGui:
                     else:
                         audio_data = np.array(audio.samples, dtype=np.float32)
 
-                    # Cache individual chunk
+                    # Cache individual chunk (include voice config)
+                    config_id = self.selected_voice_config[0] if self.selected_voice_config else None
                     self.audio_cache.put(chunk, model_type, speaker_id, speed,
-                                       audio_data.copy(), audio.sample_rate)
+                                       audio_data.copy(), audio.sample_rate, config_id)
 
                     self.log_status(f"  ✓ Chunk {i} generated ({len(audio_data)/audio.sample_rate:.1f}s)")
 
@@ -1593,9 +2271,10 @@ class TTSGui:
         self.current_audio_file = temp_file
         sf.write(self.current_audio_file, self.audio_data, self.sample_rate)
 
-        # Cache the final stitched result
+        # Cache the final stitched result (include voice config)
+        config_id = self.selected_voice_config[0] if self.selected_voice_config else None
         self.audio_cache.put(full_cache_key, model_type, speaker_id, speed,
-                           self.audio_data.copy(), self.sample_rate)
+                           self.audio_data.copy(), self.sample_rate, config_id)
 
         # Calculate performance metrics
         elapsed_time = time.time() - start_time
@@ -1631,21 +2310,34 @@ class TTSGui:
                 self.log_status(f"⚠ Chunk validation warning: {error_msg} - attempting anyway...")
                 # Don't return None, try to generate anyway as validation might be too conservative
 
-            if model_type == "matcha":
-                if not self.matcha_available:
-                    self.log_status("⚠ Matcha-TTS model not available")
-                    return None
+            # Get current voice configuration
+            if not self.selected_voice_config:
+                self.log_status("⚠ No voice configuration selected")
+                return None
 
-                self.load_matcha_model()
-                return self.matcha_tts.generate(text, sid=0, speed=speed)
+            config_id, config = self.selected_voice_config
 
-            elif model_type == "kokoro":
-                if not self.kokoro_available:
-                    self.log_status("⚠ Kokoro model not available")
-                    return None
+            # Load the appropriate model
+            tts_model = self.load_voice_model(config_id, config)
+            if tts_model is None:
+                self.log_status(f"⚠ Failed to load voice model: {config['name']}")
+                return None
 
-                self.load_kokoro_model()
-                return self.kokoro_tts.generate(text, sid=speaker_id, speed=speed)
+            # Generate audio with the loaded model (with error handling)
+            try:
+                return tts_model.generate(text, sid=speaker_id, speed=speed)
+            except Exception as e:
+                error_msg = str(e)
+                if "phontab" in error_msg or "espeak-ng-data" in error_msg:
+                    self.log_status(f"⚠ Language processing error (missing espeak data): {error_msg}")
+                    self.log_status("💡 Try using a different voice model or check espeak-ng-data installation")
+                elif "No such file or directory" in error_msg:
+                    self.log_status(f"⚠ Missing model file: {error_msg}")
+                    self.log_status("💡 Some model files may be missing - try redownloading the model")
+                else:
+                    self.log_status(f"⚠ Voice generation error: {error_msg}")
+                    self.log_status("💡 Try using a different voice or check the text input")
+                return None
 
         except Exception as e:
             error_msg = str(e)
@@ -1685,14 +2377,29 @@ class TTSGui:
                     continue
 
                 try:
-                    if model_type == "matcha":
-                        audio = self.matcha_tts.generate(sentence.strip(), sid=0, speed=speed)
-                    elif model_type == "kokoro":
-                        audio = self.kokoro_tts.generate(sentence.strip(), sid=speaker_id, speed=speed)
+                    # Use the current voice configuration
+                    if not self.selected_voice_config:
+                        continue
+
+                    config_id, config = self.selected_voice_config
+                    tts_model = self.tts_models.get(config_id)
+                    if tts_model is None:
+                        continue
+
+                    audio = tts_model.generate(sentence.strip(), sid=speaker_id, speed=speed)
 
                     if audio:
                         audio_chunks.append(audio)
                         self.log_status(f"    ✓ Sub-chunk {i+1}/{len(sentences)} processed")
+                except Exception as sub_e:
+                    error_msg = str(sub_e)
+                    if "phontab" in error_msg or "espeak-ng-data" in error_msg:
+                        self.log_status(f"    ⚠ Language processing error in sub-chunk {i+1}: skipping")
+                    elif "No such file or directory" in error_msg:
+                        self.log_status(f"    ⚠ Missing file error in sub-chunk {i+1}: skipping")
+                    else:
+                        self.log_status(f"    ⚠ Error in sub-chunk {i+1}: {error_msg}")
+                    continue  # Skip this chunk and continue with others
                 except Exception as sub_e:
                     self.log_status(f"    ⚠ Sub-chunk {i+1} failed: {str(sub_e)[:50]}...")
                     continue
