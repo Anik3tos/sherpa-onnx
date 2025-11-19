@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "dgSpecHash": "qkTv8Q31ZmE=",
+  "success": false,
+  "projectFilePath": "D:\\repos\\sherpa-onnx\\scripts\\dotnet\\examples\\Common.csproj",
+  "expectedPackageFiles": [],
+  "logs": [
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "The local source 'D:\\tmp\\packages' doesn't exist.",
+      "projectPath": "D:\\repos\\sherpa-onnx\\scripts\\dotnet\\examples\\Common.csproj",
+      "filePath": "D:\\repos\\sherpa-onnx\\scripts\\dotnet\\examples\\Common.csproj",
+      "targetGraphs": []
+    }
+  ]
+}
