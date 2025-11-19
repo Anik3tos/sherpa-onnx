@@ -54,6 +54,22 @@ node ./test-offline-speaker-diarization.js
 
 In the following, we demonstrate how to run text-to-speech.
 
+## ./test-offline-tts-kitten-en.js
+
+[./test-offline-tts-kitten-en.js](./test-offline-tts-kitten-en.js) shows how to use
+[kitten-nano-en-v0_1-fp16](https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kitten-nano-en-v0_1-fp16.tar.bz2)
+for text-to-speech.
+
+You can use the following command to run it:
+
+```bash
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kitten-nano-en-v0_1-fp16.tar.bz2
+tar xf kitten-nano-en-v0_1-fp16.tar.bz2
+rm kitten-nano-en-v0_1-fp16.tar.bz2
+
+node ./test-offline-tts-kitten-en.js
+```
+
 ## ./test-offline-tts-kokoro-en.js
 
 [./test-offline-tts-kokoro-en.js](./test-offline-tts-kokoro-en.js) shows how to use
@@ -185,6 +201,38 @@ tar xvf sherpa-onnx-zipformer-ctc-zh-int8-2025-07-03.tar.bz2
 rm sherpa-onnx-zipformer-ctc-zh-int8-2025-07-03.tar.bz2
 
 node ./test-offline-zipformer-ctc.js
+```
+
+## ./test-offline-omnilingual-asr-ctc.js
+
+[./test-offline-omnilingual-asr-ctc.js](./test-offline-omnilingual-asr-ctc.js) demonstrates
+how to decode a file with a Omnilingual ASR CTC model. In the code we use
+[sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12.tar.bz2](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12.tar.bz2).
+
+You can use the following command to run it:
+
+```bash
+wget https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12.tar.bz2
+tar xvf sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12.tar.bz2
+rm sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12.tar.bz2
+
+node ./test-offline-omnilingual-asr-ctc.js
+```
+
+## ./test-offline-wenet-ctc.js
+
+[./test-offline-wenet-ctc.js](./test-offline-wenet-ctc.js) demonstrates
+how to decode a file with a WeNet CTC model. In the code we use
+[sherpa-onnx-wenetspeech-yue-u2pp-conformer-ctc-zh-en-cantonese-int8-2025-09-10.tar.bz2](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-wenetspeech-yue-u2pp-conformer-ctc-zh-en-cantonese-int8-2025-09-10.tar.bz2).
+
+You can use the following command to run it:
+
+```bash
+wget https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-wenetspeech-yue-u2pp-conformer-ctc-zh-en-cantonese-int8-2025-09-10.tar.bz2
+tar xvf sherpa-onnx-wenetspeech-yue-u2pp-conformer-ctc-zh-en-cantonese-int8-2025-09-10.tar.bz2
+rm sherpa-onnx-wenetspeech-yue-u2pp-conformer-ctc-zh-en-cantonese-int8-2025-09-10.tar.bz2
+
+node ./test-offline-wenet-ctc.js
 ```
 
 ## ./test-offline-nemo-ctc.js
@@ -377,6 +425,18 @@ rm sherpa-onnx-streaming-paraformer-bilingual-zh-en.tar.bz2
 node ./test-online-paraformer-microphone-mic.js
 ```
 
+## ./test-online-t-one-ctc.js
+[./test-online-t-one-ctc.js](./test-online-t-one-ctc.js) demonstrates
+how to decode a file using a streaming T-one model.
+
+You can use the following command to run it:
+
+```bash
+wget https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-t-one-russian-2025-09-08.tar.bz2
+tar xvf sherpa-onnx-streaming-t-one-russian-2025-09-08.tar.bz2
+rm sherpa-onnx-streaming-t-one-russian-2025-09-08.tar.bz2
+node ./test-online-t-one-ctc.js
+```
 
 ## ./test-online-paraformer.js
 [./test-online-paraformer.js](./test-online-paraformer.js) demonstrates

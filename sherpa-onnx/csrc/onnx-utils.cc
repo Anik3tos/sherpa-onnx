@@ -11,6 +11,7 @@
 #include <numeric>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "onnxruntime_cxx_api.h"  // NOLINT
@@ -155,10 +156,30 @@ Ort::Value Clone(OrtAllocator *allocator, const Ort::Value *v) {
       std::copy(start, end, dst);
       return ans;
     }
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16: {
+      Ort::Value ans =
+          Ort::Value::CreateTensor(allocator, shape.data(), shape.size(),
+                                   ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16);
+      const auto *start = v->GetTensorData<uint16_t>();
+      const auto *end = start + type_and_shape.GetElementCount();
+      auto *dst = ans.GetTensorMutableData<uint16_t>();
+      std::copy(start, end, dst);
+      return ans;
+    }
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16: {
+      Ort::Value ans = Ort::Value::CreateTensor<uint16_t>(
+          allocator, shape.data(), shape.size());
+      const auto *start = v->GetTensorData<uint16_t>();
+      const auto *end = start + type_and_shape.GetElementCount();
+      auto *dst = ans.GetTensorMutableData<uint16_t>();
+      std::copy(start, end, dst);
+      return ans;
+    }
+
     default:
-      fprintf(stderr, "Unsupported type: %d\n",
-              static_cast<int32_t>(type_and_shape.GetElementType()));
-      exit(-1);
+      SHERPA_ONNX_LOGE("Unsupported type: %d\n",
+                       static_cast<int32_t>(type_and_shape.GetElementType()));
+      SHERPA_ONNX_EXIT(-1);
       // unreachable code
       return Ort::Value{nullptr};
   }
@@ -183,14 +204,23 @@ Ort::Value View(Ort::Value *v) {
       return Ort::Value::CreateTensor(
           memory_info, v->GetTensorMutableData<float>(),
           type_and_shape.GetElementCount(), shape.data(), shape.size());
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16:
+      return Ort::Value::CreateTensor(
+          memory_info, v->GetTensorMutableData<uint16_t>(),
+          type_and_shape.GetElementCount() * sizeof(uint16_t), shape.data(),
+          shape.size(), ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16);
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16:
+      return Ort::Value::CreateTensor(
+          memory_info, v->GetTensorMutableData<uint16_t>(),
+          type_and_shape.GetElementCount(), shape.data(), shape.size());
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL:
       return Ort::Value::CreateTensor(
           memory_info, v->GetTensorMutableData<bool>(),
           type_and_shape.GetElementCount(), shape.data(), shape.size());
     default:
-      fprintf(stderr, "Unsupported type: %d\n",
-              static_cast<int32_t>(type_and_shape.GetElementType()));
-      exit(-1);
+      SHERPA_ONNX_LOGE("Unsupported type: %d\n",
+                       static_cast<int32_t>(type_and_shape.GetElementType()));
+      SHERPA_ONNX_EXIT(-1);
       // unreachable code
       return Ort::Value{nullptr};
   }
@@ -229,7 +259,7 @@ void PrintShape(const Ort::Value *v) {
     os << i << ", ";
   }
   os << "\n";
-  fprintf(stderr, "%s", os.str().c_str());
+  SHERPA_ONNX_LOGE("%s", os.str().c_str());
 }
 
 template <typename T /*= float*/>
@@ -241,7 +271,7 @@ void Print1D(const Ort::Value *v) {
     os << d[i] << " ";
   }
   os << "\n";
-  fprintf(stderr, "%s\n", os.str().c_str());
+  SHERPA_ONNX_LOGE("%s\n", os.str().c_str());
 }
 
 template void Print1D<int64_t>(const Ort::Value *v);
@@ -260,7 +290,7 @@ void Print2D(const Ort::Value *v) {
     }
     os << "\n";
   }
-  fprintf(stderr, "%s\n", os.str().c_str());
+  SHERPA_ONNX_LOGE("%s\n", os.str().c_str());
 }
 
 template void Print2D<int64_t>(const Ort::Value *v);
@@ -271,15 +301,15 @@ void Print3D(const Ort::Value *v) {
   const float *d = v->GetTensorData<float>();
 
   for (int32_t p = 0; p != static_cast<int32_t>(shape[0]); ++p) {
-    fprintf(stderr, "---plane %d---\n", p);
+    SHERPA_ONNX_LOGE("---plane %d---\n", p);
     for (int32_t r = 0; r != static_cast<int32_t>(shape[1]); ++r) {
       for (int32_t c = 0; c != static_cast<int32_t>(shape[2]); ++c, ++d) {
-        fprintf(stderr, "%.3f ", *d);
+        SHERPA_ONNX_LOGE("%.3f ", *d);
       }
-      fprintf(stderr, "\n");
+      SHERPA_ONNX_LOGE("\n");
     }
   }
-  fprintf(stderr, "\n");
+  SHERPA_ONNX_LOGE("\n");
 }
 
 void Print4D(const Ort::Value *v) {
@@ -287,19 +317,19 @@ void Print4D(const Ort::Value *v) {
   const float *d = v->GetTensorData<float>();
 
   for (int32_t p = 0; p != static_cast<int32_t>(shape[0]); ++p) {
-    fprintf(stderr, "---plane %d---\n", p);
+    SHERPA_ONNX_LOGE("---plane %d---\n", p);
     for (int32_t q = 0; q != static_cast<int32_t>(shape[1]); ++q) {
-      fprintf(stderr, "---subplane %d---\n", q);
+      SHERPA_ONNX_LOGE("---subplane %d---\n", q);
       for (int32_t r = 0; r != static_cast<int32_t>(shape[2]); ++r) {
         for (int32_t c = 0; c != static_cast<int32_t>(shape[3]); ++c, ++d) {
-          fprintf(stderr, "%.3f ", *d);
+          SHERPA_ONNX_LOGE("%.3f ", *d);
         }
-        fprintf(stderr, "\n");
+        SHERPA_ONNX_LOGE("\n");
       }
-      fprintf(stderr, "\n");
+      SHERPA_ONNX_LOGE("\n");
     }
   }
-  fprintf(stderr, "\n");
+  SHERPA_ONNX_LOGE("\n");
 }
 
 Ort::Value Repeat(OrtAllocator *allocator, Ort::Value *cur_encoder_out,

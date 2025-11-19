@@ -11,6 +11,7 @@
 #include <sstream>
 #include <string>
 #include <strstream>
+#include <unordered_map>
 #include <utility>
 
 #if __ANDROID_API__ >= 9
@@ -130,14 +131,14 @@ std::unordered_map<std::string, int32_t> ReadTokens(
     iss >> std::ws;
     if (!iss.eof()) {
       SHERPA_ONNX_LOGE("Error: %s", line.c_str());
-      exit(-1);
+      SHERPA_ONNX_EXIT(-1);
     }
 
 #if 0
     if (token2id.count(sym)) {
       SHERPA_ONNX_LOGE("Duplicated token %s. Line %s. Existing ID: %d",
                        sym.c_str(), line.c_str(), token2id.at(sym));
-      exit(-1);
+      SHERPA_ONNX_EXIT(-1);
     }
 #endif
     if (id2token) {
@@ -171,6 +172,12 @@ SymbolTable::SymbolTable(Manager *mgr, const std::string &filename) {
 void SymbolTable::Init(std::istream &is) {
   sym2id_ = ReadTokens(is, &id2sym_);
   is_bbpe_ = IsByteBPE(sym2id_);
+
+  if (sym2id_.count("<0x00>") && sym2id_.count("<0xFF>") &&
+      ((sym2id_.at("<0xFF>") - sym2id_.at("<0x00>")) == 255)) {
+    is_bpe_with_byte_fallback_ = true;
+    id_for_0x00_ = sym2id_.at("<0x00>");
+  }
 }
 
 std::string SymbolTable::ToString() const {
@@ -197,13 +204,13 @@ const std::string SymbolTable::operator[](int32_t id) const {
   // id 0 is blank, id 1 is sos/eos, id 2 is unk
   //
   // Note: For moonshine models, 0 is <unk>, 1, is <s>, 2 is</s>
-  if (id >= 3 && id <= 258 && sym.size() == 6 && sym[0] == '<' &&
+  if (is_bpe_with_byte_fallback_ && sym.size() == 6 && sym[0] == '<' &&
       sym[1] == '0' && sym[2] == 'x' && sym[5] == '>') {
     std::ostringstream os;
-    os << std::hex << std::uppercase << (id - 3);
+    os << std::hex << std::uppercase << (id - id_for_0x00_);
 
     if (std::string(sym.data() + 3, sym.data() + 5) == os.str()) {
-      uint8_t i = id - 3;
+      uint8_t i = id - id_for_0x00_;
       sym = std::string(&i, &i + 1);
     }
   }

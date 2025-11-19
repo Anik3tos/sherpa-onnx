@@ -14,7 +14,6 @@ if [[ ! -f ../build/lib/libsherpa-onnx-jni.dylib  && ! -f ../build/lib/libsherpa
     -DSHERPA_ONNX_ENABLE_TESTS=OFF \
     -DSHERPA_ONNX_ENABLE_CHECK=OFF \
     -DBUILD_SHARED_LIBS=ON \
-    -DBUILD_SHARED_LIBS=ON \
     -DSHERPA_ONNX_ENABLE_PORTAUDIO=OFF \
     -DSHERPA_ONNX_ENABLE_JNI=ON \
     ..
@@ -24,7 +23,7 @@ if [[ ! -f ../build/lib/libsherpa-onnx-jni.dylib  && ! -f ../build/lib/libsherpa
   popd
 fi
 
-export LD_LIBRARY_PATH=$PWD/build/lib:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=$PWD/../build/lib:$LD_LIBRARY_PATH
 echo $LD_LIBRARY_PATH
 
 function testVersion() {
@@ -72,6 +71,12 @@ function testSpeakerEmbeddingExtractor() {
 
 
 function testOnlineAsr() {
+  if [ ! -f ./sherpa-onnx-streaming-t-one-russian-2025-09-08/tokens.txt ]; then
+    curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-t-one-russian-2025-09-08.tar.bz2
+    tar xvf sherpa-onnx-streaming-t-one-russian-2025-09-08.tar.bz2
+    rm sherpa-onnx-streaming-t-one-russian-2025-09-08.tar.bz2
+  fi
+
   if [ ! -f ./sherpa-onnx-streaming-zipformer-en-2023-02-21/tokens.txt ]; then
     git lfs install
     GIT_CLONE_PROTECTION_ACTIVE=false git clone https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-02-21
@@ -138,6 +143,12 @@ function testTts() {
     curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2
     tar xf kokoro-en-v0_19.tar.bz2
     rm kokoro-en-v0_19.tar.bz2
+  fi
+
+  if [ ! -f ./kitten-nano-en-v0_1-fp16/model.fp16.onnx ]; then
+    curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kitten-nano-en-v0_1-fp16.tar.bz2
+    tar xf kitten-nano-en-v0_1-fp16.tar.bz2
+    rm kitten-nano-en-v0_1-fp16.tar.bz2
   fi
 
   out_filename=test_tts.jar
@@ -477,8 +488,53 @@ function testOfflineNeMoCanary() {
   java -Djava.library.path=../build/lib -jar $out_filename
 }
 
-# testVersion
 
+function testOfflineOmnilingualAsrCtc() {
+  if [ ! -f sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12/tokens.txt ]; then
+    curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12.tar.bz2
+    tar xvf sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12.tar.bz2
+    rm sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12.tar.bz2
+  fi
+
+  out_filename=test_offline_omnilingual_asr_ctc.jar
+  kotlinc-jvm -include-runtime -d $out_filename \
+    test_offline_omnilingual_asr_ctc.kt \
+    FeatureConfig.kt \
+    HomophoneReplacerConfig.kt \
+    OfflineRecognizer.kt \
+    OfflineStream.kt \
+    WaveReader.kt \
+    faked-asset-manager.kt
+
+  ls -lh $out_filename
+  java -Djava.library.path=../build/lib -jar $out_filename
+}
+
+function testOfflineWenetCtc() {
+  if [ ! -f sherpa-onnx-wenetspeech-yue-u2pp-conformer-ctc-zh-en-cantonese-int8-2025-09-10/model.int8.onnx ]; then
+    curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-wenetspeech-yue-u2pp-conformer-ctc-zh-en-cantonese-int8-2025-09-10.tar.bz2
+    tar xvf sherpa-onnx-wenetspeech-yue-u2pp-conformer-ctc-zh-en-cantonese-int8-2025-09-10.tar.bz2
+    rm sherpa-onnx-wenetspeech-yue-u2pp-conformer-ctc-zh-en-cantonese-int8-2025-09-10.tar.bz2
+  fi
+
+  out_filename=test_offline_wenet_ctc.jar
+  kotlinc-jvm -include-runtime -d $out_filename \
+    test_offline_wenet_ctc.kt \
+    FeatureConfig.kt \
+    HomophoneReplacerConfig.kt \
+    OfflineRecognizer.kt \
+    OfflineStream.kt \
+    WaveReader.kt \
+    faked-asset-manager.kt
+
+  ls -lh $out_filename
+  java -Djava.library.path=../build/lib -jar $out_filename
+}
+
+testVersion
+
+testOfflineOmnilingualAsrCtc
+testOfflineWenetCtc
 testOfflineNeMoCanary
 testOfflineSenseVoiceWithHr
 testOfflineSpeechDenoiser

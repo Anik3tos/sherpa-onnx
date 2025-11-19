@@ -1,4 +1,4 @@
-### Supported functions
+ ### Supported functions
 
 |Speech recognition| [Speech synthesis][tts-url] | [Source separation][ss-url] |
 |------------------|------------------|-------------------|
@@ -21,11 +21,11 @@
 
 |Architecture| Android | iOS     | Windows    | macOS | linux | HarmonyOS |
 |------------|---------|---------|------------|-------|-------|-----------|
-|   x64      |  ✔️      |         |   ✔️        | ✔️     |  ✔️    |   ✔️       |
-|   x86      |  ✔️      |         |   ✔️        |       |       |           |
-|   arm64    |  ✔️      | ✔️       |   ✔️        | ✔️     |  ✔️    |   ✔️       |
-|   arm32    |  ✔️      |         |            |       |  ✔️    |   ✔️       |
-|   riscv64  |         |         |            |       |  ✔️    |           |
+|   x64      |  ✔️      |         |   ✔️      | ✔️    |  ✔️    |   ✔️   |
+|   x86      |  ✔️      |         |   ✔️      |       |        |        |
+|   arm64    |  ✔️      | ✔️      |   ✔️      | ✔️    |  ✔️    |   ✔️   |
+|   arm32    |  ✔️      |         |           |       |  ✔️    |   ✔️   |
+|   riscv64  |          |         |           |       |  ✔️    |        |
 
 ### Supported programming languages
 
@@ -45,6 +45,9 @@ For Rust support, please see [sherpa-rs][sherpa-rs]
 
 It also supports WebAssembly.
 
+[Join our discord](https://discord.gg/fJdxzg2VbG)
+
+
 ## Introduction
 
 This repository supports running the following functions **locally**
@@ -63,7 +66,7 @@ This repository supports running the following functions **locally**
 
 on the following platforms and operating systems:
 
-  - x86, ``x86_64``, 32-bit ARM, 64-bit ARM (arm64, aarch64), RISC-V (riscv64), **RK NPU**
+  - x86, ``x86_64``, 32-bit ARM, 64-bit ARM (arm64, aarch64), RISC-V (riscv64), **RK NPU**, **Ascend NPU**
   - Linux, macOS, Windows, openKylin
   - Android, WearOS
   - iOS
@@ -171,8 +174,8 @@ We also have spaces built using WebAssembly. They are listed below:
 |------------------------------------------|------------------------------------|------------------------------------|
 | Android (arm64-v8a, armeabi-v7a, x86_64) | [Address][flutter-tts-android]     | [点此][flutter-tts-android-cn]     |
 | Linux (x64)                              | [Address][flutter-tts-linux]       | [点此][flutter-tts-linux-cn]       |
-| macOS (x64)                              | [Address][flutter-tts-macos-x64]   | [点此][flutter-tts-macos-arm64-cn] |
-| macOS (arm64)                            | [Address][flutter-tts-macos-arm64] | [点此][flutter-tts-macos-x64-cn]   |
+| macOS (x64)                              | [Address][flutter-tts-macos-x64]   | [点此][flutter-tts-macos-x64-cn] |
+| macOS (arm64)                            | [Address][flutter-tts-macos-arm64] | [点此][flutter-tts-macos-arm64-cn]   |
 | Windows (x64)                            | [Address][flutter-tts-win-x64]     | [点此][flutter-tts-win-x64-cn]     |
 
 > Note: You need to build from source for iOS.
@@ -388,6 +391,34 @@ It uses sherpa-onnx for speech-to-text and text-to-speech.
 |---|
 |![](https://github.com/user-attachments/assets/f6eea2d5-1807-42cb-9160-be8da2971e1f)|
 
+### [TtsReader - Desktop application](https://github.com/ys-pro-duction/TtsReader)
+
+A desktop text-to-speech application built using Kotlin Multiplatform.
+
+### [MentraOS](https://github.com/Mentra-Community/MentraOS)
+
+> Smart glasses OS, with dozens of built-in apps. Users get AI assistant, notifications,
+> translation, screen mirror, captions, and more. Devs get to write 1 app that runs on
+> any pair of smart glasses.
+
+It uses sherpa-onnx for real-time speech recognition on iOS and Android devices.
+See also <https://github.com/Mentra-Community/MentraOS/pull/861>
+
+It uses Swift for iOS and Java for Android.
+
+### [flet_sherpa_onnx](https://github.com/SamYuan1990/flet_sherpa_onnx)
+
+Flet ASR/STT component based on sherpa-onnx.
+Example [a chat box agent](https://github.com/SamYuan1990/i18n-agent-action)
+
+### [elderly-companion](https://github.com/SearocIsMe/elderly-companion)
+
+It uses sherpa-onnx's Python API for real-time speech recognition in ROS2 with RK NPU.
+
+### [achatbot-go](https://github.com/ai-bot-pro/achatbot-go)
+
+a multimodal chatbot based on go with sherpa-onnx's speech lib api.
+
 [sherpa-rs]: https://github.com/thewh1teagle/sherpa-rs
 [silero-vad]: https://github.com/snakers4/silero-vad
 [Raspberry Pi]: https://www.raspberrypi.com/
@@ -491,9 +522,9 @@ It uses sherpa-onnx for speech-to-text and text-to-speech.
 [flutter-tts-linux]: https://k2-fsa.github.io/sherpa/onnx/flutter/tts-linux.html
 [flutter-tts-linux-cn]: https://k2-fsa.github.io/sherpa/onnx/flutter/tts-linux-cn.html
 [flutter-tts-macos-x64]: https://k2-fsa.github.io/sherpa/onnx/flutter/tts-macos-x64.html
-[flutter-tts-macos-arm64-cn]: https://k2-fsa.github.io/sherpa/onnx/flutter/tts-macos-x64-cn.html
+[flutter-tts-macos-arm64-cn]: https://k2-fsa.github.io/sherpa/onnx/flutter/tts-macos-arm64-cn.html
 [flutter-tts-macos-arm64]: https://k2-fsa.github.io/sherpa/onnx/flutter/tts-macos-arm64.html
-[flutter-tts-macos-x64-cn]: https://k2-fsa.github.io/sherpa/onnx/flutter/tts-macos-arm64-cn.html
+[flutter-tts-macos-x64-cn]: https://k2-fsa.github.io/sherpa/onnx/flutter/tts-macos-x64-cn.html
 [flutter-tts-win-x64]: https://k2-fsa.github.io/sherpa/onnx/flutter/tts-win.html
 [flutter-tts-win-x64-cn]: https://k2-fsa.github.io/sherpa/onnx/flutter/tts-win-cn.html
 [lazarus-subtitle]: https://k2-fsa.github.io/sherpa/onnx/lazarus/download-generated-subtitles.html
@@ -541,4 +572,4 @@ It uses sherpa-onnx for speech-to-text and text-to-speech.
 [vad-url]: https://k2-fsa.github.io/sherpa/onnx/vad/index.html
 [kws-url]: https://k2-fsa.github.io/sherpa/onnx/kws/index.html
 [punct-url]: https://k2-fsa.github.io/sherpa/onnx/punctuation/index.html
-[se-url]: https://k2-fsa.github.io/sherpa/onnx/speech-enhancment/index.html
+[se-url]: https://k2-fsa.github.io/sherpa/onnx/speech-enhancement/index.html

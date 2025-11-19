@@ -9,6 +9,9 @@ data class OfflineRecognizerResult(
     val lang: String,
     val emotion: String,
     val event: String,
+
+    // valid only for TDT models
+    val durations: FloatArray,
 )
 
 data class OfflineTransducerModelConfig(
@@ -30,6 +33,14 @@ data class OfflineDolphinModelConfig(
 )
 
 data class OfflineZipformerCtcModelConfig(
+    var model: String = "",
+)
+
+data class OfflineWenetCtcModelConfig(
+    var model: String = "",
+)
+
+data class OfflineOmnilingualAsrCtcModelConfig(
     var model: String = "",
 )
 
@@ -77,6 +88,8 @@ data class OfflineModelConfig(
     var senseVoice: OfflineSenseVoiceModelConfig = OfflineSenseVoiceModelConfig(),
     var dolphin: OfflineDolphinModelConfig = OfflineDolphinModelConfig(),
     var zipformerCtc: OfflineZipformerCtcModelConfig = OfflineZipformerCtcModelConfig(),
+    var wenetCtc: OfflineWenetCtcModelConfig = OfflineWenetCtcModelConfig(),
+    var omnilingual: OfflineOmnilingualAsrCtcModelConfig = OfflineOmnilingualAsrCtcModelConfig(),
     var canary: OfflineCanaryModelConfig = OfflineCanaryModelConfig(),
     var teleSpeech: String = "",
     var numThreads: Int = 1,
@@ -139,13 +152,15 @@ class OfflineRecognizer(
         val lang = objArray[3] as String
         val emotion = objArray[4] as String
         val event = objArray[5] as String
+        val durations = objArray[6] as FloatArray
         return OfflineRecognizerResult(
             text = text,
             tokens = tokens,
             timestamps = timestamps,
             lang = lang,
             emotion = emotion,
-            event = event
+            event = event,
+            durations = durations,
         )
     }
 
@@ -672,6 +687,60 @@ fun getOfflineModelConfig(type: Int): OfflineModelConfig? {
             val modelDir = "sherpa-onnx-zipformer-ctc-small-zh-int8-2025-07-16"
             return OfflineModelConfig(
                 zipformerCtc = OfflineZipformerCtcModelConfig(
+                    model = "$modelDir/model.int8.onnx",
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        40 -> {
+            val modelDir = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
+            return OfflineModelConfig(
+                transducer = OfflineTransducerModelConfig(
+                    encoder = "$modelDir/encoder.int8.onnx",
+                    decoder = "$modelDir/decoder.int8.onnx",
+                    joiner = "$modelDir/joiner.int8.onnx",
+                ),
+                tokens = "$modelDir/tokens.txt",
+                modelType = "nemo_transducer",
+            )
+        }
+
+        41 -> {
+            val modelDir = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09"
+            return OfflineModelConfig(
+                senseVoice = OfflineSenseVoiceModelConfig(
+                    model = "$modelDir/model.int8.onnx",
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        42 -> {
+            val modelDir = "sherpa-onnx-wenetspeech-yue-u2pp-conformer-ctc-zh-en-cantonese-int8-2025-09-10"
+            return OfflineModelConfig(
+                wenetCtc = OfflineWenetCtcModelConfig(
+                    model = "$modelDir/model.int8.onnx",
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        43 -> {
+            val modelDir = "sherpa-onnx-paraformer-zh-int8-2025-10-07"
+            return OfflineModelConfig(
+                paraformer = OfflineParaformerModelConfig(
+                    model = "$modelDir/model.int8.onnx",
+                ),
+                tokens = "$modelDir/tokens.txt",
+                modelType = "paraformer",
+            )
+        }
+
+        44 -> {
+            val modelDir = "sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12"
+            return OfflineModelConfig(
+                omnilingual = OfflineOmnilingualAsrCtcModelConfig(
                     model = "$modelDir/model.int8.onnx",
                 ),
                 tokens = "$modelDir/tokens.txt",

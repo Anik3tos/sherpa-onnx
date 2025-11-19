@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <clocale>
 #include <cwctype>
+#include <string>
+#include <vector>
 
 #include "portaudio.h"  // NOLINT
 #include "sherpa-onnx/csrc/display.h"
@@ -125,8 +127,8 @@ for a list of pre-trained models to download.
   float mic_sample_rate = 16000;
   const char *pSampleRateStr = std::getenv("SHERPA_ONNX_MIC_SAMPLE_RATE");
   if (pSampleRateStr) {
-    fprintf(stderr, "Use sample rate %f for mic\n", mic_sample_rate);
     mic_sample_rate = atof(pSampleRateStr);
+    fprintf(stderr, "Use sample rate %f for mic\n", mic_sample_rate);
   }
 
   if (!mic.OpenDevice(device_index, mic_sample_rate, 1, RecordCallback,
