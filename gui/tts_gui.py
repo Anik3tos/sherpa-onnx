@@ -28,6 +28,1513 @@ import json
 import signal
 import sys
 import atexit
+import xml.etree.ElementTree as ET
+from xml.etree.ElementTree import ParseError
+import subprocess
+import shutil
+import io
+import wave
+import struct
+
+
+class AudioExporter:
+    """
+    Advanced Audio Export System
+    
+    Supports multiple audio formats with configurable quality settings,
+    silence detection for automatic track splitting, and chapter/section markers.
+    """
+    
+    # Supported audio formats with their configurations
+    FORMATS = {
+        'wav': {
+            'name': 'WAV (Lossless)',
+            'extension': '.wav',
+            'description': 'Uncompressed audio, highest quality',
+            'supports_bitrate': False,
+            'default_sample_rate': 44100,
+        },
+        'flac': {
+            'name': 'FLAC (Lossless Compressed)',
+            'extension': '.flac',
+            'description': 'Lossless compression, ~50% smaller than WAV',
+            'supports_bitrate': False,
+            'default_sample_rate': 44100,
+            'compression_levels': list(range(9)),  # 0-8
+        },
+        'mp3': {
+            'name': 'MP3 (Lossy)',
+            'extension': '.mp3',
+            'description': 'Universal compatibility, good compression',
+            'supports_bitrate': True,
+            'bitrates': [64, 96, 128, 160, 192, 224, 256, 320],
+            'default_bitrate': 192,
+            'default_sample_rate': 44100,
+        },
+        'ogg': {
+            'name': 'OGG Vorbis (Lossy)',
+            'extension': '.ogg',
+            'description': 'Open format, excellent quality at lower bitrates',
+            'supports_bitrate': True,
+            'bitrates': [64, 80, 96, 112, 128, 160, 192, 224, 256, 320],
+            'default_bitrate': 160,
+            'default_sample_rate': 44100,
+        },
+    }
+    
+    SAMPLE_RATES = [8000, 11025, 16000, 22050, 32000, 44100, 48000]
+    
+    def __init__(self):
+        self.ffmpeg_available = self._check_ffmpeg()
+        self.pydub_available = self._check_pydub()
+        
+    def _check_ffmpeg(self):
+        """Check if ffmpeg is available in the system"""
+        try:
+            result = subprocess.run(
+                ['ffmpeg', '-version'],
+                capture_output=True,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+            return result.returncode == 0
+        except FileNotFoundError:
+            return False
+        except Exception:
+            return False
+    
+    def _check_pydub(self):
+        """Check if pydub is available"""
+        try:
+            from pydub import AudioSegment
+            return True
+        except ImportError:
+            return False
+    
+    def get_available_formats(self):
+        """Get list of formats that can be exported on this system"""
+        available = ['wav']  # WAV is always available via soundfile
+        
+        # FLAC is supported by soundfile
+        available.append('flac')
+        
+        # MP3 and OGG require either ffmpeg or pydub
+        if self.ffmpeg_available or self.pydub_available:
+            available.extend(['mp3', 'ogg'])
+        
+        return available
+    
+    def export(self, audio_data, sample_rate, output_path, format_type='wav', options=None):
+        """
+        Export audio to specified format
+        
+        Args:
+            audio_data: numpy array of audio samples
+            sample_rate: source sample rate
+            output_path: output file path
+            format_type: one of 'wav', 'flac', 'mp3', 'ogg'
+            options: dict with:
+                - target_sample_rate: desired output sample rate
+                - bitrate: for lossy formats (kbps)
+                - compression_level: for FLAC (0-8)
+                - normalize: whether to normalize audio
+                - metadata: dict of metadata tags
+        
+        Returns:
+            tuple (success: bool, message: str, output_path: str)
+        """
+        if options is None:
+            options = {}
+        
+        format_config = self.FORMATS.get(format_type)
+        if not format_config:
+            return False, f"Unknown format: {format_type}", None
+        
+        # Ensure audio is numpy array
+        if not isinstance(audio_data, np.ndarray):
+            audio_data = np.array(audio_data, dtype=np.float32)
+        
+        # Normalize if requested
+        if options.get('normalize', False):
+            audio_data = self._normalize_audio(audio_data)
+        
+        # Resample if needed
+        target_sr = options.get('target_sample_rate', sample_rate)
+        if target_sr != sample_rate:
+            audio_data = self._resample_audio(audio_data, sample_rate, target_sr)
+            sample_rate = target_sr
+        
+        # Ensure correct file extension
+        if not output_path.lower().endswith(format_config['extension']):
+            output_path = output_path + format_config['extension']
+        
+        try:
+            if format_type == 'wav':
+                return self._export_wav(audio_data, sample_rate, output_path, options)
+            elif format_type == 'flac':
+                return self._export_flac(audio_data, sample_rate, output_path, options)
+            elif format_type in ['mp3', 'ogg']:
+                return self._export_lossy(audio_data, sample_rate, output_path, format_type, options)
+            else:
+                return False, f"Unsupported format: {format_type}", None
+        except Exception as e:
+            return False, f"Export failed: {str(e)}", None
+    
+    def _normalize_audio(self, audio_data, target_peak=0.95):
+        """Normalize audio to target peak level"""
+        max_val = np.max(np.abs(audio_data))
+        if max_val > 0:
+            return audio_data * (target_peak / max_val)
+        return audio_data
+    
+    def _resample_audio(self, audio_data, src_rate, target_rate):
+        """Resample audio to different sample rate"""
+        if src_rate == target_rate:
+            return audio_data
+        
+        # Simple linear interpolation resampling
+        duration = len(audio_data) / src_rate
+        target_samples = int(duration * target_rate)
+        
+        # Use numpy interpolation
+        x_old = np.linspace(0, len(audio_data) - 1, len(audio_data))
+        x_new = np.linspace(0, len(audio_data) - 1, target_samples)
+        
+        resampled = np.interp(x_new, x_old, audio_data)
+        return resampled.astype(np.float32)
+    
+    def _export_wav(self, audio_data, sample_rate, output_path, options):
+        """Export as WAV using soundfile"""
+        try:
+            # soundfile handles WAV export natively
+            subtype = options.get('wav_subtype', 'PCM_16')
+            sf.write(output_path, audio_data, sample_rate, subtype=subtype)
+            return True, f"Exported WAV: {output_path}", output_path
+        except Exception as e:
+            return False, f"WAV export failed: {str(e)}", None
+    
+    def _export_flac(self, audio_data, sample_rate, output_path, options):
+        """Export as FLAC using soundfile"""
+        try:
+            # soundfile supports FLAC natively
+            # options can be used for future compression level settings
+            _ = options  # Reserved for future use (compression level, etc.)
+            sf.write(output_path, audio_data, sample_rate, format='FLAC')
+            return True, f"Exported FLAC: {output_path}", output_path
+        except Exception as e:
+            return False, f"FLAC export failed: {str(e)}", None
+    
+    def _export_lossy(self, audio_data, sample_rate, output_path, format_type, options):
+        """Export as MP3 or OGG using ffmpeg or pydub"""
+        format_config = self.FORMATS[format_type]
+        bitrate = options.get('bitrate', format_config['default_bitrate'])
+        
+        # First, create a temporary WAV file
+        temp_wav = output_path + '.temp.wav'
+        
+        try:
+            # Write temporary WAV
+            sf.write(temp_wav, audio_data, sample_rate, subtype='PCM_16')
+            
+            # Convert using ffmpeg or pydub
+            if self.ffmpeg_available:
+                success, msg = self._convert_with_ffmpeg(temp_wav, output_path, format_type, bitrate, options)
+            elif self.pydub_available:
+                success, msg = self._convert_with_pydub(temp_wav, output_path, format_type, bitrate, options)
+            else:
+                return False, f"No encoder available for {format_type}. Install ffmpeg or pydub.", None
+            
+            if success:
+                return True, f"Exported {format_type.upper()}: {output_path}", output_path
+            else:
+                return False, msg, None
+                
+        finally:
+            # Cleanup temporary file
+            if os.path.exists(temp_wav):
+                try:
+                    os.remove(temp_wav)
+                except OSError:
+                    pass
+    
+    def _convert_with_ffmpeg(self, input_path, output_path, format_type, bitrate, options):
+        """Convert audio using ffmpeg"""
+        try:
+            cmd = ['ffmpeg', '-y', '-i', input_path]
+            
+            # Add format-specific options
+            if format_type == 'mp3':
+                cmd.extend(['-codec:a', 'libmp3lame', '-b:a', f'{bitrate}k'])
+            elif format_type == 'ogg':
+                cmd.extend(['-codec:a', 'libvorbis', '-b:a', f'{bitrate}k'])
+            
+            # Add metadata if provided
+            metadata = options.get('metadata', {})
+            for key, value in metadata.items():
+                if value:
+                    cmd.extend(['-metadata', f'{key}={value}'])
+            
+            cmd.append(output_path)
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+            
+            if result.returncode == 0:
+                return True, "Success"
+            else:
+                return False, f"ffmpeg error: {result.stderr}"
+                
+        except Exception as e:
+            return False, f"ffmpeg conversion failed: {str(e)}"
+    
+    def _convert_with_pydub(self, input_path, output_path, format_type, bitrate, options):
+        """Convert audio using pydub"""
+        try:
+            from pydub import AudioSegment
+            
+            audio = AudioSegment.from_wav(input_path)
+            
+            # Add metadata if provided
+            metadata = options.get('metadata', {})
+            tags = {}
+            for key, value in metadata.items():
+                if value:
+                    tags[key] = value
+            
+            if format_type == 'mp3':
+                audio.export(output_path, format='mp3', bitrate=f'{bitrate}k', tags=tags)
+            elif format_type == 'ogg':
+                audio.export(output_path, format='ogg', bitrate=f'{bitrate}k', tags=tags)
+            
+            return True, "Success"
+            
+        except Exception as e:
+            return False, f"pydub conversion failed: {str(e)}"
+    
+    def detect_silence(self, audio_data, sample_rate, min_silence_len=500, silence_thresh=-40, 
+                       seek_step=10):
+        """
+        Detect silence regions in audio for automatic track splitting
+        
+        Args:
+            audio_data: numpy array of audio samples
+            sample_rate: sample rate
+            min_silence_len: minimum length of silence in milliseconds
+            silence_thresh: silence threshold in dB
+            seek_step: step size in milliseconds for scanning
+        
+        Returns:
+            list of tuples: [(start_ms, end_ms), ...] for each silence region
+        """
+        if not isinstance(audio_data, np.ndarray):
+            audio_data = np.array(audio_data, dtype=np.float32)
+        
+        # Convert parameters to samples
+        min_silence_samples = int(min_silence_len * sample_rate / 1000)
+        seek_samples = int(seek_step * sample_rate / 1000)
+        
+        # Convert threshold from dB to linear
+        silence_thresh_linear = 10 ** (silence_thresh / 20)
+        
+        silence_regions = []
+        in_silence = False
+        silence_start = 0
+        
+        # Scan through audio
+        for i in range(0, len(audio_data) - seek_samples, seek_samples):
+            chunk = audio_data[i:i + seek_samples]
+            chunk_level = np.max(np.abs(chunk))
+            
+            is_silent = chunk_level < silence_thresh_linear
+            
+            if is_silent and not in_silence:
+                # Start of silence
+                in_silence = True
+                silence_start = i
+            elif not is_silent and in_silence:
+                # End of silence
+                in_silence = False
+                silence_end = i
+                silence_duration = silence_end - silence_start
+                
+                if silence_duration >= min_silence_samples:
+                    start_ms = int(silence_start * 1000 / sample_rate)
+                    end_ms = int(silence_end * 1000 / sample_rate)
+                    silence_regions.append((start_ms, end_ms))
+        
+        # Handle silence at the end
+        if in_silence:
+            silence_end = len(audio_data)
+            silence_duration = silence_end - silence_start
+            if silence_duration >= min_silence_samples:
+                start_ms = int(silence_start * 1000 / sample_rate)
+                end_ms = int(silence_end * 1000 / sample_rate)
+                silence_regions.append((start_ms, end_ms))
+        
+        return silence_regions
+    
+    def split_by_silence(self, audio_data, sample_rate, min_silence_len=500, 
+                         silence_thresh=-40, min_segment_len=1000, keep_silence=200):
+        """
+        Split audio at silence points
+        
+        Args:
+            audio_data: numpy array of audio samples
+            sample_rate: sample rate
+            min_silence_len: minimum silence length for split point (ms)
+            silence_thresh: silence threshold in dB
+            min_segment_len: minimum segment length (ms)
+            keep_silence: amount of silence to keep at edges (ms)
+        
+        Returns:
+            list of numpy arrays (audio segments)
+        """
+        silence_regions = self.detect_silence(
+            audio_data, sample_rate, min_silence_len, silence_thresh
+        )
+        
+        if not silence_regions:
+            return [audio_data]  # No silence found, return whole audio
+        
+        # Convert keep_silence to samples
+        keep_samples = int(keep_silence * sample_rate / 1000)
+        min_segment_samples = int(min_segment_len * sample_rate / 1000)
+        
+        segments = []
+        prev_end = 0
+        
+        for start_ms, end_ms in silence_regions:
+            # Calculate split point (middle of silence)
+            split_point_samples = int((start_ms + end_ms) / 2 * sample_rate / 1000)
+            
+            # Create segment from previous end to current split point
+            segment_start = max(0, prev_end - keep_samples)
+            segment_end = min(len(audio_data), split_point_samples + keep_samples)
+            
+            segment = audio_data[segment_start:segment_end]
+            
+            # Only add if segment is long enough
+            if len(segment) >= min_segment_samples:
+                segments.append(segment)
+            
+            prev_end = segment_end
+        
+        # Add final segment
+        if prev_end < len(audio_data):
+            segment = audio_data[max(0, prev_end - keep_samples):]
+            if len(segment) >= min_segment_samples:
+                segments.append(segment)
+        
+        return segments if segments else [audio_data]
+    
+    def split_by_chapters(self, audio_data, sample_rate, chapter_markers):
+        """
+        Split audio by chapter/section markers
+        
+        Args:
+            audio_data: numpy array of audio samples
+            sample_rate: sample rate
+            chapter_markers: list of dicts with 'start_ms' and 'title' keys
+        
+        Returns:
+            list of tuples: [(title, audio_segment), ...]
+        """
+        if not chapter_markers:
+            return [("Full Audio", audio_data)]
+        
+        # Sort markers by start time
+        markers = sorted(chapter_markers, key=lambda x: x.get('start_ms', 0))
+        
+        segments = []
+        
+        for i, marker in enumerate(markers):
+            start_ms = marker.get('start_ms', 0)
+            title = marker.get('title', f'Chapter {i+1}')
+            
+            # Determine end point
+            if i + 1 < len(markers):
+                end_ms = markers[i + 1]['start_ms']
+            else:
+                end_ms = len(audio_data) * 1000 // sample_rate
+            
+            # Convert to samples
+            start_sample = int(start_ms * sample_rate / 1000)
+            end_sample = int(end_ms * sample_rate / 1000)
+            
+            # Extract segment
+            segment = audio_data[start_sample:end_sample]
+            
+            if len(segment) > 0:
+                segments.append((title, segment))
+        
+        return segments if segments else [("Full Audio", audio_data)]
+    
+    def detect_chapters_from_text(self, text):
+        """
+        Detect potential chapter/section markers from text
+        
+        Args:
+            text: input text to analyze
+        
+        Returns:
+            list of chapter titles found
+        """
+        chapters = []
+        
+        # Common chapter patterns
+        patterns = [
+            r'^(?:Chapter|CHAPTER)\s+(\d+|[IVXLCDM]+)(?:\s*[:\-\.]\s*(.*))?$',
+            r'^(?:Part|PART)\s+(\d+|[IVXLCDM]+)(?:\s*[:\-\.]\s*(.*))?$',
+            r'^(?:Section|SECTION)\s+(\d+)(?:\s*[:\-\.]\s*(.*))?$',
+            r'^#{1,3}\s+(.+)$',  # Markdown headers
+            r'^\*\*\*+\s*$',  # Separator lines
+            r'^[-=]{3,}\s*$',  # HR-style separators
+        ]
+        
+        lines = text.split('\n')
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if not line:
+                continue
+            
+            for pattern in patterns:
+                match = re.match(pattern, line, re.IGNORECASE)
+                if match:
+                    groups = match.groups()
+                    if len(groups) >= 2 and groups[1]:
+                        title = f"{groups[0]}: {groups[1]}"
+                    elif groups[0]:
+                        title = groups[0]
+                    else:
+                        title = line
+                    chapters.append({
+                        'title': title.strip(),
+                        'line_number': i,
+                        'original_line': line
+                    })
+                    break
+        
+        return chapters
+    
+    def export_multiple_tracks(self, audio_segments, output_dir, base_name, format_type='wav', options=None):
+        """
+        Export multiple audio segments as separate tracks
+        
+        Args:
+            audio_segments: list of (title, audio_data) tuples or just audio_data arrays
+            output_dir: output directory
+            base_name: base file name
+            format_type: audio format
+            options: export options
+        
+        Returns:
+            list of (success, message, output_path) tuples
+        """
+        if options is None:
+            options = {}
+        
+        results = []
+        os.makedirs(output_dir, exist_ok=True)
+        
+        for i, segment in enumerate(audio_segments, 1):
+            if isinstance(segment, tuple):
+                title, audio_data = segment
+                # Clean title for filename
+                safe_title = re.sub(r'[<>:"/\\|?*]', '', title)[:50]
+                filename = f"{base_name}_{i:02d}_{safe_title}"
+            else:
+                audio_data = segment
+                filename = f"{base_name}_{i:02d}"
+            
+            output_path = os.path.join(output_dir, filename)
+            
+            # Need sample rate for export
+            sample_rate = options.get('sample_rate', 22050)
+            
+            result = self.export(audio_data, sample_rate, output_path, format_type, options)
+            results.append(result)
+        
+        return results
+
+
+class ExportOptionsDialog:
+    """
+    Advanced Export Options Dialog
+    
+    Provides UI for configuring audio export with format selection,
+    quality settings, and split options.
+    """
+    
+    def __init__(self, parent, audio_exporter, audio_data, sample_rate, colors, original_text=""):
+        self.parent = parent
+        self.exporter = audio_exporter
+        self.audio_data = audio_data
+        self.sample_rate = sample_rate
+        self.colors = colors
+        self.original_text = original_text
+        self.result = None
+        
+        # Create dialog window
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("Advanced Export Options")
+        self.dialog.geometry("650x850")
+        self.dialog.configure(bg=colors['bg_primary'])
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+        
+        # Center dialog
+        self.dialog.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() - 650) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - 850) // 2
+        self.dialog.geometry(f"+{x}+{y}")
+        
+        self._setup_ui()
+        
+    def _setup_ui(self):
+        """Setup the dialog UI"""
+        # Main container with padding
+        main_frame = ttk.Frame(self.dialog, style='Dark.TFrame', padding="15")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        title_label = tk.Label(main_frame, text="🎵 Advanced Audio Export", 
+                              font=('Segoe UI', 14, 'bold'),
+                              bg=self.colors['bg_primary'], fg=self.colors['fg_primary'])
+        title_label.pack(pady=(0, 15))
+        
+        # === Format Selection Frame ===
+        format_frame = ttk.LabelFrame(main_frame, text="📀 Output Format", 
+                                     style='Dark.TLabelframe', padding="10")
+        format_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        self.format_var = tk.StringVar(value='wav')
+        available_formats = self.exporter.get_available_formats()
+        
+        for fmt in available_formats:
+            fmt_config = self.exporter.FORMATS[fmt]
+            rb = ttk.Radiobutton(format_frame, text=fmt_config['name'],
+                                variable=self.format_var, value=fmt,
+                                command=self._on_format_change,
+                                style='Dark.TRadiobutton')
+            rb.pack(anchor=tk.W, pady=2)
+            
+            # Description
+            desc_label = tk.Label(format_frame, text=f"    {fmt_config['description']}",
+                                 bg=self.colors['bg_secondary'], 
+                                 fg=self.colors['fg_muted'],
+                                 font=('Segoe UI', 9))
+            desc_label.pack(anchor=tk.W)
+        
+        # Format availability note
+        if 'mp3' not in available_formats or 'ogg' not in available_formats:
+            note_label = tk.Label(format_frame, 
+                                 text="ℹ️ Install ffmpeg for MP3/OGG support",
+                                 bg=self.colors['bg_secondary'],
+                                 fg=self.colors['accent_orange'],
+                                 font=('Segoe UI', 9))
+            note_label.pack(anchor=tk.W, pady=(10, 0))
+        
+        # === Quality Settings Frame ===
+        quality_frame = ttk.LabelFrame(main_frame, text="⚙️ Quality Settings",
+                                      style='Dark.TLabelframe', padding="10")
+        quality_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # Sample Rate
+        sr_frame = ttk.Frame(quality_frame, style='Dark.TFrame')
+        sr_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(sr_frame, text="Sample Rate:", style='Dark.TLabel').pack(side=tk.LEFT)
+        self.sample_rate_var = tk.StringVar(value=str(self.sample_rate))
+        sr_combo = ttk.Combobox(sr_frame, textvariable=self.sample_rate_var,
+                               values=[str(sr) for sr in AudioExporter.SAMPLE_RATES],
+                               width=10, state='readonly')
+        sr_combo.pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Label(sr_frame, text="Hz", style='Dark.TLabel').pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Bitrate (for lossy formats)
+        self.bitrate_frame = ttk.Frame(quality_frame, style='Dark.TFrame')
+        self.bitrate_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(self.bitrate_frame, text="Bitrate:", style='Dark.TLabel').pack(side=tk.LEFT)
+        self.bitrate_var = tk.StringVar(value='192')
+        self.bitrate_combo = ttk.Combobox(self.bitrate_frame, textvariable=self.bitrate_var,
+                                         values=['64', '96', '128', '160', '192', '224', '256', '320'],
+                                         width=10, state='readonly')
+        self.bitrate_combo.pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Label(self.bitrate_frame, text="kbps", style='Dark.TLabel').pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Initially hide bitrate for WAV
+        self.bitrate_frame.pack_forget()
+        
+        # Normalize checkbox
+        self.normalize_var = tk.BooleanVar(value=False)
+        norm_cb = ttk.Checkbutton(quality_frame, text="Normalize audio (maximize volume without clipping)",
+                                 variable=self.normalize_var, style='Dark.TRadiobutton')
+        norm_cb.pack(anchor=tk.W, pady=5)
+        
+        # === Split Options Frame ===
+        split_frame = ttk.LabelFrame(main_frame, text="✂️ Split Options",
+                                    style='Dark.TLabelframe', padding="10")
+        split_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        self.split_mode_var = tk.StringVar(value='none')
+        
+        # No split
+        ttk.Radiobutton(split_frame, text="Export as single file",
+                       variable=self.split_mode_var, value='none',
+                       command=self._on_split_mode_change,
+                       style='Dark.TRadiobutton').pack(anchor=tk.W, pady=2)
+        
+        # Split by silence
+        ttk.Radiobutton(split_frame, text="Split by silence (automatic track detection)",
+                       variable=self.split_mode_var, value='silence',
+                       command=self._on_split_mode_change,
+                       style='Dark.TRadiobutton').pack(anchor=tk.W, pady=2)
+        
+        # Split by chapters
+        ttk.Radiobutton(split_frame, text="Split by chapters/sections (from text markers)",
+                       variable=self.split_mode_var, value='chapters',
+                       command=self._on_split_mode_change,
+                       style='Dark.TRadiobutton').pack(anchor=tk.W, pady=2)
+        
+        # Silence detection settings
+        self.silence_settings_frame = ttk.Frame(split_frame, style='Dark.TFrame')
+        
+        # Min silence length
+        sl_frame = ttk.Frame(self.silence_settings_frame, style='Dark.TFrame')
+        sl_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(sl_frame, text="Min silence length:", style='Dark.TLabel').pack(side=tk.LEFT)
+        self.min_silence_var = tk.StringVar(value='500')
+        sl_spin = ttk.Spinbox(sl_frame, from_=100, to=5000, increment=100,
+                             textvariable=self.min_silence_var, width=8)
+        sl_spin.pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Label(sl_frame, text="ms", style='Dark.TLabel').pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Silence threshold
+        st_frame = ttk.Frame(self.silence_settings_frame, style='Dark.TFrame')
+        st_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(st_frame, text="Silence threshold:", style='Dark.TLabel').pack(side=tk.LEFT)
+        self.silence_thresh_var = tk.StringVar(value='-40')
+        st_spin = ttk.Spinbox(st_frame, from_=-60, to=-20, increment=5,
+                             textvariable=self.silence_thresh_var, width=8)
+        st_spin.pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Label(st_frame, text="dB", style='Dark.TLabel').pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Preview silence detection button
+        preview_btn = ttk.Button(self.silence_settings_frame, text="🔍 Preview Splits",
+                                command=self._preview_silence_splits,
+                                style='Dark.TButton')
+        preview_btn.pack(anchor=tk.W, pady=(5, 0))
+        
+        # Detected chapters display
+        self.chapters_frame = ttk.Frame(split_frame, style='Dark.TFrame')
+        
+        chapters_label = tk.Label(self.chapters_frame, 
+                                 text="Detected chapters from text:",
+                                 bg=self.colors['bg_secondary'],
+                                 fg=self.colors['fg_primary'],
+                                 font=('Segoe UI', 10))
+        chapters_label.pack(anchor=tk.W)
+        
+        self.chapters_listbox = tk.Listbox(self.chapters_frame, height=4,
+                                          bg=self.colors['bg_primary'],
+                                          fg=self.colors['fg_primary'],
+                                          selectbackground=self.colors['selection'])
+        self.chapters_listbox.pack(fill=tk.X, pady=5)
+        
+        # Detect chapters
+        self._detect_chapters()
+        
+        # === Metadata Frame ===
+        metadata_frame = ttk.LabelFrame(main_frame, text="🏷️ Metadata (Optional)",
+                                       style='Dark.TLabelframe', padding="10")
+        metadata_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # Title
+        title_row = ttk.Frame(metadata_frame, style='Dark.TFrame')
+        title_row.pack(fill=tk.X, pady=2)
+        ttk.Label(title_row, text="Title:", style='Dark.TLabel', width=10).pack(side=tk.LEFT)
+        self.meta_title_var = tk.StringVar()
+        ttk.Entry(title_row, textvariable=self.meta_title_var, width=40).pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Artist
+        artist_row = ttk.Frame(metadata_frame, style='Dark.TFrame')
+        artist_row.pack(fill=tk.X, pady=2)
+        ttk.Label(artist_row, text="Artist:", style='Dark.TLabel', width=10).pack(side=tk.LEFT)
+        self.meta_artist_var = tk.StringVar(value='Sherpa-ONNX TTS')
+        ttk.Entry(artist_row, textvariable=self.meta_artist_var, width=40).pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Album
+        album_row = ttk.Frame(metadata_frame, style='Dark.TFrame')
+        album_row.pack(fill=tk.X, pady=2)
+        ttk.Label(album_row, text="Album:", style='Dark.TLabel', width=10).pack(side=tk.LEFT)
+        self.meta_album_var = tk.StringVar()
+        ttk.Entry(album_row, textvariable=self.meta_album_var, width=40).pack(side=tk.LEFT, padx=(5, 0))
+        
+        # === Info Display ===
+        info_frame = ttk.Frame(main_frame, style='Card.TFrame', padding="8")
+        info_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        duration = len(self.audio_data) / self.sample_rate
+        self.info_label = tk.Label(info_frame, 
+                                  text=f"Duration: {duration:.1f}s | Sample Rate: {self.sample_rate} Hz | Samples: {len(self.audio_data):,}",
+                                  bg=self.colors['bg_tertiary'],
+                                  fg=self.colors['accent_cyan'],
+                                  font=('Consolas', 10))
+        self.info_label.pack()
+        
+        # === Buttons ===
+        btn_frame = ttk.Frame(main_frame, style='Dark.TFrame')
+        btn_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        ttk.Button(btn_frame, text="Cancel", command=self._cancel,
+                  style='Dark.TButton').pack(side=tk.RIGHT, padx=(10, 0))
+        
+        ttk.Button(btn_frame, text="💾 Export", command=self._export,
+                  style='Primary.TButton').pack(side=tk.RIGHT)
+    
+    def _on_format_change(self):
+        """Handle format selection change"""
+        fmt = self.format_var.get()
+        fmt_config = self.exporter.FORMATS.get(fmt, {})
+        
+        if fmt_config.get('supports_bitrate', False):
+            self.bitrate_frame.pack(fill=tk.X, pady=5, after=self.bitrate_frame.master.winfo_children()[0])
+            # Set default bitrate for format
+            default_br = fmt_config.get('default_bitrate', 192)
+            self.bitrate_var.set(str(default_br))
+            # Update available bitrates
+            if 'bitrates' in fmt_config:
+                self.bitrate_combo['values'] = [str(br) for br in fmt_config['bitrates']]
+        else:
+            self.bitrate_frame.pack_forget()
+    
+    def _on_split_mode_change(self):
+        """Handle split mode change"""
+        mode = self.split_mode_var.get()
+        
+        # Hide all split settings first
+        self.silence_settings_frame.pack_forget()
+        self.chapters_frame.pack_forget()
+        
+        if mode == 'silence':
+            self.silence_settings_frame.pack(fill=tk.X, pady=(10, 0))
+        elif mode == 'chapters':
+            self.chapters_frame.pack(fill=tk.X, pady=(10, 0))
+    
+    def _detect_chapters(self):
+        """Detect chapters from original text"""
+        if not self.original_text:
+            return
+        
+        chapters = self.exporter.detect_chapters_from_text(self.original_text)
+        
+        self.chapters_listbox.delete(0, tk.END)
+        self.detected_chapters = chapters
+        
+        if chapters:
+            for i, ch in enumerate(chapters, 1):
+                self.chapters_listbox.insert(tk.END, f"{i}. {ch['title']}")
+        else:
+            self.chapters_listbox.insert(tk.END, "(No chapters detected)")
+            self.detected_chapters = []
+    
+    def _preview_silence_splits(self):
+        """Preview silence detection results"""
+        try:
+            min_silence = int(self.min_silence_var.get())
+            threshold = int(self.silence_thresh_var.get())
+            
+            silence_regions = self.exporter.detect_silence(
+                self.audio_data, self.sample_rate,
+                min_silence_len=min_silence,
+                silence_thresh=threshold
+            )
+            
+            if silence_regions:
+                msg = f"Found {len(silence_regions)} silence region(s):\n\n"
+                for i, (start, end) in enumerate(silence_regions[:10], 1):
+                    duration = end - start
+                    msg += f"  {i}. {start/1000:.1f}s - {end/1000:.1f}s ({duration}ms)\n"
+                if len(silence_regions) > 10:
+                    msg += f"\n  ... and {len(silence_regions) - 10} more"
+                msg += f"\n\nThis would create {len(silence_regions) + 1} track(s)."
+            else:
+                msg = "No silence regions detected with current settings.\n\nTry adjusting:\n- Lower threshold (more sensitive)\n- Shorter minimum silence length"
+            
+            messagebox.showinfo("Silence Detection Preview", msg, parent=self.dialog)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Preview failed: {str(e)}", parent=self.dialog)
+    
+    def _cancel(self):
+        """Cancel and close dialog"""
+        self.result = None
+        self.dialog.destroy()
+    
+    def _export(self):
+        """Perform export with selected options"""
+        # Build options dict
+        self.result = {
+            'format': self.format_var.get(),
+            'target_sample_rate': int(self.sample_rate_var.get()),
+            'normalize': self.normalize_var.get(),
+            'split_mode': self.split_mode_var.get(),
+            'metadata': {
+                'title': self.meta_title_var.get(),
+                'artist': self.meta_artist_var.get(),
+                'album': self.meta_album_var.get(),
+            }
+        }
+        
+        # Add format-specific options
+        fmt = self.format_var.get()
+        if self.exporter.FORMATS.get(fmt, {}).get('supports_bitrate', False):
+            self.result['bitrate'] = int(self.bitrate_var.get())
+        
+        # Add split options
+        if self.result['split_mode'] == 'silence':
+            self.result['silence_settings'] = {
+                'min_silence_len': int(self.min_silence_var.get()),
+                'silence_thresh': int(self.silence_thresh_var.get()),
+            }
+        elif self.result['split_mode'] == 'chapters':
+            self.result['chapters'] = self.detected_chapters
+        
+        self.dialog.destroy()
+    
+    def show(self):
+        """Show dialog and wait for result"""
+        self.dialog.wait_window()
+        return self.result
+
+
+class SSMLProcessor:
+    """
+    SSML (Speech Synthesis Markup Language) Processor
+    
+    Converts SSML markup to text with appropriate modifications for TTS engines
+    that don't natively support SSML. This provides professional-grade control
+    over speech synthesis including:
+    
+    - <emphasis> - Emphasize text with different levels
+    - <break> - Insert pauses of varying duration
+    - <prosody> - Control pitch, rate, and volume
+    - <say-as> - Control pronunciation (digits, characters, ordinal, etc.)
+    - <phoneme> - Phonetic pronunciation hints
+    - <sub> - Text substitution
+    - <p> and <s> - Paragraph and sentence markers
+    - <voice> - Voice selection hints (informational)
+    
+    Industry standard W3C SSML 1.1 compliance where possible.
+    """
+    
+    def __init__(self):
+        # Break time mappings (SSML strength to approximate pause text)
+        self.break_mappings = {
+            'none': '',
+            'x-weak': ',',
+            'weak': ', ',
+            'medium': '. ',
+            'strong': '... ',
+            'x-strong': '...... '
+        }
+        
+        # Emphasis mappings (how to represent emphasis in plain text)
+        self.emphasis_mappings = {
+            'strong': ('*', '*'),      # Will be converted to natural emphasis cues
+            'moderate': ('', ''),
+            'reduced': ('', ''),
+            'none': ('', '')
+        }
+        
+        # Say-as interpretation types
+        self.say_as_types = [
+            'cardinal', 'ordinal', 'digits', 'fraction', 'unit', 'date', 
+            'time', 'telephone', 'address', 'characters', 'spell-out',
+            'currency', 'verbatim', 'acronym', 'expletive'
+        ]
+        
+        # Track prosody state for nested elements
+        self.prosody_stack = []
+        self.current_rate = 1.0
+        self.current_pitch = 1.0
+        self.current_volume = 1.0
+    
+    def is_ssml(self, text):
+        """Check if text appears to be SSML markup"""
+        text = text.strip()
+        # Check for common SSML patterns
+        if text.startswith('<speak') or text.startswith('<?xml'):
+            return True
+        # Check for any SSML-like tags
+        ssml_tags = ['<speak', '<break', '<emphasis', '<prosody', '<say-as', 
+                     '<phoneme', '<sub', '<voice', '<p>', '<s>']
+        return any(tag in text.lower() for tag in ssml_tags)
+    
+    def parse_ssml(self, ssml_text):
+        """
+        Parse SSML and convert to plain text with prosody information.
+        
+        Returns:
+            dict with:
+                - 'text': Processed plain text
+                - 'rate': Suggested speaking rate multiplier
+                - 'segments': List of text segments with individual prosody settings
+                - 'errors': List of any parsing errors encountered
+        """
+        result = {
+            'text': '',
+            'rate': 1.0,
+            'segments': [],
+            'errors': [],
+            'has_prosody_changes': False
+        }
+        
+        # Reset prosody state
+        self.prosody_stack = []
+        self.current_rate = 1.0
+        self.current_pitch = 1.0
+        self.current_volume = 1.0
+        
+        # Ensure SSML has a root element
+        ssml_text = ssml_text.strip()
+        if not ssml_text.startswith('<speak'):
+            # Wrap in speak tags if not present
+            if not ssml_text.startswith('<?xml'):
+                ssml_text = f'<speak>{ssml_text}</speak>'
+        
+        # Handle XML declaration if present
+        if ssml_text.startswith('<?xml'):
+            # Find the end of XML declaration and process the rest
+            decl_end = ssml_text.find('?>')
+            if decl_end != -1:
+                ssml_text = ssml_text[decl_end + 2:].strip()
+                if not ssml_text.startswith('<speak'):
+                    ssml_text = f'<speak>{ssml_text}</speak>'
+        
+        try:
+            # Parse XML
+            root = ET.fromstring(ssml_text)
+            
+            # Process the tree
+            processed_text, segments = self._process_element(root)
+            
+            result['text'] = self._clean_text(processed_text)
+            result['segments'] = segments
+            
+            # Calculate average rate from segments
+            if segments:
+                rates = [s['rate'] for s in segments if s.get('rate')]
+                if rates:
+                    result['rate'] = sum(rates) / len(rates)
+                    if result['rate'] != 1.0:
+                        result['has_prosody_changes'] = True
+            
+        except ParseError as e:
+            result['errors'].append(f"XML parsing error: {str(e)}")
+            # Fall back to stripping tags
+            result['text'] = self._strip_tags(ssml_text)
+        except Exception as e:
+            result['errors'].append(f"SSML processing error: {str(e)}")
+            result['text'] = self._strip_tags(ssml_text)
+        
+        return result
+    
+    def _process_element(self, element, depth=0):
+        """Recursively process an SSML element and its children"""
+        segments = []
+        text_parts = []
+        
+        # Handle element's text content
+        if element.text:
+            text_parts.append(element.text)
+            segments.append({
+                'text': element.text,
+                'rate': self.current_rate,
+                'pitch': self.current_pitch,
+                'volume': self.current_volume
+            })
+        
+        # Process child elements
+        for child in element:
+            child_text, child_segments = self._process_child_element(child, depth)
+            text_parts.append(child_text)
+            segments.extend(child_segments)
+            
+            # Handle tail text (text after the child element)
+            if child.tail:
+                text_parts.append(child.tail)
+                segments.append({
+                    'text': child.tail,
+                    'rate': self.current_rate,
+                    'pitch': self.current_pitch,
+                    'volume': self.current_volume
+                })
+        
+        return ''.join(text_parts), segments
+    
+    def _process_child_element(self, element, depth):
+        """Process a specific SSML element based on its tag"""
+        tag = element.tag.lower()
+        
+        # Remove namespace if present
+        if '}' in tag:
+            tag = tag.split('}')[1]
+        
+        # Handle different SSML elements
+        if tag == 'break':
+            return self._handle_break(element)
+        elif tag == 'emphasis':
+            return self._handle_emphasis(element, depth)
+        elif tag == 'prosody':
+            return self._handle_prosody(element, depth)
+        elif tag == 'say-as':
+            return self._handle_say_as(element, depth)
+        elif tag == 'phoneme':
+            return self._handle_phoneme(element, depth)
+        elif tag == 'sub':
+            return self._handle_sub(element)
+        elif tag == 'voice':
+            return self._handle_voice(element, depth)
+        elif tag in ['p', 'paragraph']:
+            return self._handle_paragraph(element, depth)
+        elif tag in ['s', 'sentence']:
+            return self._handle_sentence(element, depth)
+        elif tag == 'audio':
+            return self._handle_audio(element)
+        elif tag == 'speak':
+            # Nested speak tags - just process content
+            return self._process_element(element, depth + 1)
+        else:
+            # Unknown tag - process content anyway
+            return self._process_element(element, depth + 1)
+    
+    def _handle_break(self, element):
+        """Handle <break> element - insert pause"""
+        time_attr = element.get('time', '')
+        strength = element.get('strength', 'medium')
+        
+        if time_attr:
+            # Parse time value (e.g., "500ms", "1s", "1.5s")
+            pause_text = self._time_to_pause(time_attr)
+        else:
+            # Use strength mapping
+            pause_text = self.break_mappings.get(strength, '. ')
+        
+        return pause_text, [{
+            'text': pause_text,
+            'rate': self.current_rate,
+            'is_break': True,
+            'break_duration': time_attr or strength
+        }]
+    
+    def _time_to_pause(self, time_str):
+        """Convert time string to pause representation"""
+        try:
+            time_str = time_str.lower().strip()
+            
+            if time_str.endswith('ms'):
+                ms = float(time_str[:-2])
+                seconds = ms / 1000
+            elif time_str.endswith('s'):
+                seconds = float(time_str[:-1])
+            else:
+                seconds = float(time_str)
+            
+            # Convert to pause markers
+            if seconds < 0.1:
+                return ''
+            elif seconds < 0.25:
+                return ','
+            elif seconds < 0.5:
+                return ', '
+            elif seconds < 1.0:
+                return '. '
+            elif seconds < 2.0:
+                return '... '
+            else:
+                return '...... '
+        except:
+            return '. '
+    
+    def _handle_emphasis(self, element, depth):
+        """Handle <emphasis> element"""
+        level = element.get('level', 'moderate')
+        
+        # Get content
+        inner_text, segments = self._process_element(element, depth + 1)
+        
+        # Apply emphasis markers
+        prefix, suffix = self.emphasis_mappings.get(level, ('', ''))
+        
+        # For strong emphasis, we can use natural speech patterns
+        if level == 'strong':
+            # Add slight pause before and after for natural emphasis
+            processed_text = f", {inner_text},"
+        elif level == 'reduced':
+            # Keep text as-is for reduced emphasis
+            processed_text = inner_text
+        else:
+            processed_text = inner_text
+        
+        # Update segments with emphasis info
+        for seg in segments:
+            seg['emphasis'] = level
+        
+        return processed_text, segments
+    
+    def _handle_prosody(self, element, depth):
+        """Handle <prosody> element - pitch, rate, volume adjustments"""
+        # Save current state
+        old_rate = self.current_rate
+        old_pitch = self.current_pitch
+        old_volume = self.current_volume
+        
+        # Parse rate attribute
+        rate = element.get('rate', '')
+        if rate:
+            self.current_rate = self._parse_prosody_value(rate, self.current_rate)
+        
+        # Parse pitch attribute
+        pitch = element.get('pitch', '')
+        if pitch:
+            self.current_pitch = self._parse_prosody_value(pitch, self.current_pitch)
+        
+        # Parse volume attribute
+        volume = element.get('volume', '')
+        if volume:
+            self.current_volume = self._parse_prosody_value(volume, self.current_volume)
+        
+        # Process content with new prosody settings
+        inner_text, segments = self._process_element(element, depth + 1)
+        
+        # Restore previous state
+        self.current_rate = old_rate
+        self.current_pitch = old_pitch
+        self.current_volume = old_volume
+        
+        return inner_text, segments
+    
+    def _parse_prosody_value(self, value, current):
+        """Parse prosody attribute value (percentage, relative, or keyword)"""
+        value = value.lower().strip()
+        
+        # Keyword values
+        keywords = {
+            'x-slow': 0.5, 'slow': 0.75, 'medium': 1.0, 'fast': 1.25, 'x-fast': 1.5,
+            'x-low': 0.5, 'low': 0.75, 'high': 1.25, 'x-high': 1.5,
+            'silent': 0, 'soft': 0.5, 'loud': 1.5, 'default': 1.0
+        }
+        
+        if value in keywords:
+            return keywords[value]
+        
+        try:
+            # Percentage (e.g., "150%", "+20%", "-10%")
+            if value.endswith('%'):
+                pct_str = value[:-1]
+                if pct_str.startswith('+'):
+                    return current * (1 + float(pct_str[1:]) / 100)
+                elif pct_str.startswith('-'):
+                    return current * (1 - float(pct_str[1:]) / 100)
+                else:
+                    return float(pct_str) / 100
+            
+            # Relative values (e.g., "+2st", "-3st" for semitones)
+            if 'st' in value:
+                st_val = float(value.replace('st', '').replace('+', ''))
+                # Convert semitones to multiplier (rough approximation)
+                return current * (2 ** (st_val / 12))
+            
+            # Plain number
+            return float(value)
+        except:
+            return current
+    
+    def _handle_say_as(self, element, depth):
+        """Handle <say-as> element - pronunciation control"""
+        interpret_as = element.get('interpret-as', '')
+        format_attr = element.get('format', '')
+        detail = element.get('detail', '')
+        
+        # Get the text content
+        inner_text, segments = self._process_element(element, depth + 1)
+        text = inner_text.strip()
+        
+        # Process based on interpret-as type
+        if interpret_as == 'characters' or interpret_as == 'spell-out':
+            # Spell out each character
+            processed = ' '.join(text)
+        elif interpret_as == 'digits':
+            # Read each digit separately
+            processed = ' '.join(text)
+        elif interpret_as == 'ordinal':
+            # Convert to ordinal (1 -> first, etc.)
+            processed = self._number_to_ordinal(text)
+        elif interpret_as == 'cardinal':
+            # Keep as number
+            processed = text
+        elif interpret_as == 'telephone':
+            # Format for telephone reading
+            processed = self._format_telephone(text)
+        elif interpret_as == 'date':
+            # Format date for reading
+            processed = self._format_date(text, format_attr)
+        elif interpret_as == 'time':
+            # Format time for reading
+            processed = self._format_time(text, format_attr)
+        elif interpret_as == 'currency':
+            # Format currency for reading
+            processed = text  # Keep as-is, TTS usually handles this
+        elif interpret_as == 'verbatim':
+            # Spell out exactly
+            processed = ' '.join(text)
+        elif interpret_as == 'acronym':
+            # Spell out as acronym
+            processed = ' '.join(text.upper())
+        elif interpret_as == 'expletive':
+            # Replace with beep or blank
+            processed = '[expletive]'
+        else:
+            processed = text
+        
+        # Update segments
+        for seg in segments:
+            seg['interpret_as'] = interpret_as
+        
+        return processed, segments
+    
+    def _number_to_ordinal(self, text):
+        """Convert number to ordinal text"""
+        try:
+            num = int(text)
+            if 10 <= num % 100 <= 20:
+                suffix = 'th'
+            else:
+                suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(num % 10, 'th')
+            return f"{num}{suffix}"
+        except:
+            return text
+    
+    def _format_telephone(self, text):
+        """Format telephone number for TTS reading"""
+        # Extract digits only
+        digits = ''.join(c for c in text if c.isdigit())
+        # Add spaces for natural reading
+        return ' '.join(digits)
+    
+    def _format_date(self, text, format_attr):
+        """Format date for TTS reading"""
+        # Basic date formatting - keep as-is mostly
+        # Could expand this with format parsing
+        return text
+    
+    def _format_time(self, text, format_attr):
+        """Format time for TTS reading"""
+        # Basic time formatting - keep as-is mostly
+        return text
+    
+    def _handle_phoneme(self, element, depth):
+        """Handle <phoneme> element - phonetic pronunciation"""
+        alphabet = element.get('alphabet', 'ipa')  # 'ipa' or 'x-sampa'
+        ph = element.get('ph', '')
+        
+        # Get the text content (this is the fallback text)
+        inner_text, segments = self._process_element(element, depth + 1)
+        
+        # For now, we use the original text since most TTS engines
+        # don't support phoneme injection. The phoneme info is stored
+        # in segments for engines that might support it.
+        for seg in segments:
+            seg['phoneme'] = ph
+            seg['phoneme_alphabet'] = alphabet
+        
+        return inner_text, segments
+    
+    def _handle_sub(self, element):
+        """Handle <sub> element - text substitution"""
+        alias = element.get('alias', '')
+        original = element.text or ''
+        
+        # Use the alias for TTS, original is what's displayed
+        text_to_speak = alias if alias else original
+        
+        return text_to_speak, [{
+            'text': text_to_speak,
+            'original': original,
+            'rate': self.current_rate,
+            'is_substitution': True
+        }]
+    
+    def _handle_voice(self, element, depth):
+        """Handle <voice> element - voice selection hints"""
+        # Voice attributes (informational - actual voice selection is in GUI)
+        voice_name = element.get('name', '')
+        gender = element.get('gender', '')
+        age = element.get('age', '')
+        variant = element.get('variant', '')
+        
+        # Process content
+        inner_text, segments = self._process_element(element, depth + 1)
+        
+        # Add voice hints to segments
+        for seg in segments:
+            seg['voice_hint'] = {
+                'name': voice_name,
+                'gender': gender,
+                'age': age,
+                'variant': variant
+            }
+        
+        return inner_text, segments
+    
+    def _handle_paragraph(self, element, depth):
+        """Handle <p> paragraph element"""
+        inner_text, segments = self._process_element(element, depth + 1)
+        
+        # Add paragraph break after
+        processed = inner_text.strip() + '\n\n'
+        
+        return processed, segments
+    
+    def _handle_sentence(self, element, depth):
+        """Handle <s> sentence element"""
+        inner_text, segments = self._process_element(element, depth + 1)
+        
+        # Ensure sentence ends properly
+        text = inner_text.strip()
+        if text and text[-1] not in '.!?':
+            text += '.'
+        
+        return text + ' ', segments
+    
+    def _handle_audio(self, element):
+        """Handle <audio> element - audio clips (informational only)"""
+        src = element.get('src', '')
+        # Audio elements are not supported - return description
+        desc = element.text or f'[Audio: {src}]'
+        return desc, [{'text': desc, 'rate': self.current_rate, 'is_audio_ref': True}]
+    
+    def _clean_text(self, text):
+        """Clean up processed text"""
+        # Normalize whitespace
+        text = re.sub(r'\s+', ' ', text)
+        # Remove multiple punctuation
+        text = re.sub(r'([.,!?])\1+', r'\1', text)
+        # Clean up spaces around punctuation
+        text = re.sub(r'\s+([.,!?])', r'\1', text)
+        text = re.sub(r'([.,!?])\s*([.,!?])', r'\1', text)
+        return text.strip()
+    
+    def _strip_tags(self, text):
+        """Strip all XML/SSML tags from text as fallback"""
+        # Remove XML declaration
+        text = re.sub(r'<\?xml[^>]*\?>', '', text)
+        # Remove all tags
+        text = re.sub(r'<[^>]+>', '', text)
+        # Clean up whitespace
+        text = re.sub(r'\s+', ' ', text)
+        return text.strip()
+    
+    def get_ssml_template(self, template_name='basic'):
+        """Get SSML template for user reference"""
+        templates = {
+            'basic': '''<speak>
+    Hello, this is a basic SSML example.
+    <break time="500ms"/>
+    With a pause in the middle.
+</speak>''',
+            
+            'emphasis': '''<speak>
+    This is <emphasis level="strong">very important</emphasis> information.
+    But this is <emphasis level="reduced">less important</emphasis>.
+</speak>''',
+            
+            'prosody': '''<speak>
+    <prosody rate="slow">Speaking slowly for clarity.</prosody>
+    <break time="300ms"/>
+    <prosody rate="fast">Now speaking quickly!</prosody>
+    <break time="300ms"/>
+    <prosody pitch="high">With a higher pitch.</prosody>
+    <prosody pitch="low">And a lower pitch.</prosody>
+</speak>''',
+            
+            'say_as': '''<speak>
+    The number <say-as interpret-as="cardinal">42</say-as> is spelled 
+    <say-as interpret-as="spell-out">42</say-as>.
+    Call <say-as interpret-as="telephone">555-1234</say-as>.
+    Today is <say-as interpret-as="date">2024-01-15</say-as>.
+</speak>''',
+            
+            'full_example': '''<speak>
+    <p>Welcome to the SSML demonstration.</p>
+    
+    <s>This shows various SSML features.</s>
+    
+    <s><emphasis level="strong">Emphasis</emphasis> makes text stand out.</s>
+    
+    <s>Add pauses: short<break time="200ms"/>medium<break time="500ms"/>long<break time="1s"/>done.</s>
+    
+    <s><prosody rate="80%">Slower speech is clearer.</prosody></s>
+    <s><prosody rate="120%">Faster speech saves time.</prosody></s>
+    
+    <s>Spell it out: <say-as interpret-as="characters">ABC</say-as></s>
+    
+    <s>Use <sub alias="Speech Synthesis Markup Language">SSML</sub> for control.</s>
+</speak>'''
+        }
+        
+        return templates.get(template_name, templates['basic'])
+    
+    def get_ssml_reference(self):
+        """Get SSML reference documentation"""
+        return """
+SSML Quick Reference
+====================
+
+ROOT ELEMENT:
+<speak>...</speak>
+    Wraps all SSML content (optional - added automatically if missing)
+
+PAUSES:
+<break time="500ms"/>     - Pause for specific time (ms or s)
+<break strength="medium"/> - Pause by strength: none, x-weak, weak, medium, strong, x-strong
+
+EMPHASIS:
+<emphasis level="strong">text</emphasis>
+    Levels: strong, moderate (default), reduced, none
+
+PROSODY (Speech Rate/Pitch/Volume):
+<prosody rate="slow">text</prosody>
+    Rate: x-slow, slow, medium, fast, x-fast, or percentage (80%, 120%)
+<prosody pitch="high">text</prosody>
+    Pitch: x-low, low, medium, high, x-high, or +/-Hz or +/-st (semitones)
+<prosody volume="loud">text</prosody>
+    Volume: silent, soft, medium, loud, default, or percentage
+
+PRONUNCIATION:
+<say-as interpret-as="type">content</say-as>
+    Types: cardinal, ordinal, characters, spell-out, digits, telephone, date, time, currency
+
+<phoneme alphabet="ipa" ph="təˈmeɪtoʊ">tomato</phoneme>
+    Phonetic pronunciation hint (IPA or X-SAMPA alphabet)
+
+<sub alias="World Wide Web">WWW</sub>
+    Substitution - speak alias instead of text
+
+STRUCTURE:
+<p>Paragraph text</p>        - Paragraph (adds pause after)
+<s>Sentence text.</s>        - Sentence marker
+
+VOICE HINTS:
+<voice name="en-US-female">text</voice>
+    Voice selection hint (name, gender, age attributes)
+"""
 
 
 # Enhanced Voice Configuration System
@@ -503,7 +2010,694 @@ class TextProcessor:
         if options.get('remove_emails', False):
             processed = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '', processed)
 
+        # Remove duplicate consecutive lines
+        if options.get('remove_duplicates', False):
+            processed = self._remove_duplicate_lines(processed)
+
+        # Convert numbers to words
+        if options.get('numbers_to_words', False):
+            processed = self._convert_numbers_to_words(processed)
+
+        # Expand abbreviations
+        if options.get('expand_abbreviations', False):
+            processed = self._expand_abbreviations(processed)
+
+        # Handle acronyms
+        if options.get('handle_acronyms', False):
+            processed = self._handle_acronyms(processed)
+
+        # Add pause markers for natural timing
+        if options.get('add_pauses', False):
+            processed = self._add_pause_markers(processed)
+
         return processed
+
+    def _remove_duplicate_lines(self, text):
+        """Remove consecutive duplicate lines"""
+        lines = text.split('\n')
+        result = []
+        prev_line = None
+
+        for line in lines:
+            stripped = line.strip()
+            if stripped and stripped == prev_line:
+                continue  # Skip duplicate
+            result.append(line)
+            prev_line = stripped
+
+        return '\n'.join(result)
+
+    def _convert_numbers_to_words(self, text):
+        """Convert numbers to words for better pronunciation"""
+        import re
+
+        def number_to_words(n):
+            """Convert a number to words"""
+            if n == 0:
+                return "zero"
+
+            ones = ['', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine',
+                    'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen',
+                    'seventeen', 'eighteen', 'nineteen']
+            tens = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety']
+
+            if n < 20:
+                return ones[n]
+            elif n < 100:
+                return tens[n // 10] + (' ' + ones[n % 10] if n % 10 != 0 else '')
+            elif n < 1000:
+                return ones[n // 100] + ' hundred' + (' ' + number_to_words(n % 100) if n % 100 != 0 else '')
+            elif n < 1000000:
+                return number_to_words(n // 1000) + ' thousand' + (' ' + number_to_words(n % 1000) if n % 1000 != 0 else '')
+            elif n < 1000000000:
+                return number_to_words(n // 1000000) + ' million' + (' ' + number_to_words(n % 1000000) if n % 1000000 != 0 else '')
+            else:
+                return number_to_words(n // 1000000000) + ' billion' + (' ' + number_to_words(n % 1000000000) if n % 1000000000 != 0 else '')
+
+        def convert_currency(match):
+            """Convert currency like $100 to words"""
+            amount = match.group(1).replace(',', '')
+            try:
+                value = float(amount)
+                dollars = int(value)
+                cents = int(round((value - dollars) * 100))
+
+                if cents == 0:
+                    return number_to_words(dollars) + ' dollars'
+                elif cents == 1:
+                    return number_to_words(dollars) + ' dollars and ' + number_to_words(cents) + ' cent'
+                else:
+                    return number_to_words(dollars) + ' dollars and ' + number_to_words(cents) + ' cents'
+            except:
+                return match.group(0)
+
+        def convert_number(match):
+            """Convert a standalone number to words"""
+            num_str = match.group(0).replace(',', '')
+            try:
+                num = int(num_str)
+                return number_to_words(num)
+            except:
+                return match.group(0)
+
+        # Convert currency first ($100, $1.50, etc)
+        text = re.sub(r'\$\s*([\d,]+(?:\.\d{2})?)', convert_currency, text)
+
+        # Convert standalone numbers (but not years like 2024)
+        text = re.sub(r'\b([1-9]\d{0,2}(?:,\d{3})*)(?!\s*(?:BC|AD|BCE|CE))\b', convert_number, text)
+
+        return text
+
+    def _expand_abbreviations(self, text):
+        """Expand common abbreviations for better pronunciation"""
+        abbreviations = {
+            # Titles
+            r'\bMr\.?\b': 'Mister',
+            r'\bMrs\.?\b': 'Missus',
+            r'\bMs\.?\b': 'Miss',
+            r'\bDr\.?\b': 'Doctor',
+            r'\bProf\.?\b': 'Professor',
+            r'\bRev\.?\b': 'Reverend',
+            r'\bHon\.?\b': 'Honorable',
+            r'\bSgt\.?\b': 'Sergeant',
+            r'\bCapt\.?\b': 'Captain',
+            r'\bLt\.?\b': 'Lieutenant',
+            r'\bGen\.?\b': 'General',
+            r'\bCol\.?\b': 'Colonel',
+            r'\bRep\.?\b': 'Representative',
+            r'\bSen\.?\b': 'Senator',
+            r'\bGov\.?\b': 'Governor',
+            r'\bPres\.?\b': 'President',
+            r'\bVP\b': 'Vice President',
+
+            # Common abbreviations
+            r'\betc\.?\b': 'et cetera',
+            r'\bie\.?\b': 'that is',
+            r'\beg\.?\b': 'for example',
+            r'\bvs\.?\b': 'versus',
+            r'\bapt\.?\b': 'apartment',
+            r'\bave\.?\b': 'avenue',
+            r'\bblvd\.?\b': 'boulevard',
+            r'\bdept\.?\b': 'department',
+            r'\bdiv\.?\b': 'division',
+            r'\binst\.?\b': 'institute',
+            r'\bprof\.?\b': 'professor',
+            r'\buni\.?\b': 'university',
+            r'\bassoc\.?\b': 'associate',
+            r'\bassn\.?\b': 'association',
+            r'\bave\.?\b': 'avenue',
+            r'\bblvd\.?\b': 'boulevard',
+            r'\bco\.?\b': 'company',
+            r'\bcorp\.?\b': 'corporation',
+            r'\binc\.?\b': 'incorporated',
+            r'\bltd\.?\b': 'limited',
+            r'\blb\.?\b': 'pound',
+            r'\boz\.?\b': 'ounce',
+            r'\bft\.?\b': 'foot',
+            r'\bhrs\.?\b': 'hours',
+            r'\bmin\.?\b': 'minutes',
+            r'\bsec\.?\b': 'seconds',
+            r'\bapprox\.?\b': 'approximately',
+            r'\bavg\.?\b': 'average',
+            r'\bmax\.?\b': 'maximum',
+            r'\bmin\.?\b': 'minimum',
+            r'\bnbr\.?\b': 'number',
+            r'\bno\.?\b': 'number',
+            r'\bpct\.?\b': 'percent',
+            r'\binfo\.?\b': 'information',
+            r'\bmsg\.?\b': 'message',
+            r'\badd\.?\b': 'address',
+            r'\bdept\.?\b': 'department',
+            r'\bdiag\.?\b': 'diagnosis',
+            r'\bdoc\.?\b': 'document',
+            r'\bex\.?\b': 'example',
+            r'\bext\.?\b': 'extension',
+            r'\bfig\.?\b': 'figure',
+            r'\bhr\.?\b': 'hour',
+            r'\bid\.?\b': 'identification',
+            r'\bmtg\.?\b': 'meeting',
+            r'\bmmbr\.?\b': 'member',
+            r'\breq\.?\b': 'request',
+            r'\bresp\.?\b': 'responsible',
+            r'\bst\.?\b': 'street',
+            r'\btemp\.?\b': 'temporary',
+            r'\btel\.?\b': 'telephone',
+            r'\btrans\.?\b': 'transaction',
+            r'\bvol\.?\b': 'volume',
+
+            # Tech abbreviations
+            r'\bapp\.?\b': 'application',
+            r'\bconfig\.?\b': 'configuration',
+            r'\binfo\.?\b': 'information',
+            r'\bAPI\b': 'A P I',
+            r'\bHTTP\b': 'H T T P',
+            r'\bHTTPS\b': 'H T T P S',
+            r'\bURL\b': 'U R L',
+            r'\bSQL\b': 'S Q L',
+            r'\bGUI\b': 'G U I',
+            r'\bCPU\b': 'C P U',
+            r'\bGPU\b': 'G P U',
+            r'\bRAM\b': 'R A M',
+            r'\bSSD\b': 'S S D',
+            r'\bHDD\b': 'H D D',
+            r'\bOS\b': 'Operating System',
+            r'\bIoT\b': 'I O T',
+            r'\bPDF\b': 'P D F',
+            r'\bXML\b': 'X M L',
+            r'\bJSON\b': 'J S O N',
+            r'\bWiFi\b': 'Wi Fi',
+
+            # Time abbreviations
+            r'\byr\.?\b': 'year',
+            r'\bmo\.?\b': 'month',
+            r'\bday\.?\b': 'day',
+            r'\bhr\.?\b': 'hour',
+            r'\bAM\b': 'A M',
+            r'\bPM\b': 'P M',
+            r'\bam\b': 'a m',
+            r'\bpm\b': 'p m',
+            r'\bEST\b': 'Eastern Standard Time',
+            r'\bPST\b': 'Pacific Standard Time',
+            r'\bGMT\b': 'Greenwich Mean Time',
+            r'\bUTC\b': 'Universal Time',
+
+            # Business/Legal
+            r'\bCEO\b': 'C E O',
+            r'\bCFO\b': 'C F O',
+            r'\bCTO\b': 'C T O',
+            r'\bCOO\b': 'C O O',
+            r'\bVP\b': 'Vice President',
+            r'\bMBA\b': 'M B A',
+            r'\bPhD\.?\b': 'P H D',
+            r'\bMD\.?\b': 'M D',
+            r'\bDO\.?\b': 'D O',
+            r'\bRN\.?\b': 'R N',
+            r'\bLPN\.?\b': 'L P N',
+            r'\bJD\.?\b': 'J D',
+            r'\bLLC\b': 'L L C',
+            r'\bLTD\b': 'Limited',
+            r'\bPLC\b': 'P L C',
+        }
+
+        for pattern, replacement in abbreviations.items():
+            text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+
+        return text
+
+    def _handle_acronyms(self, text):
+        """Handle acronyms - add spaces between letters for pronunciation"""
+        import re
+
+        # Common acronyms that should be pronounced as letters (not words)
+        letter_acronyms = {
+            # Government agencies
+            'NASA': 'N A S A',
+            'FBI': 'F B I',
+            'CIA': 'C I A',
+            'FDA': 'F D A',
+            'SEC': 'S E C',
+            'FCC': 'F C C',
+            'FTC': 'F T C',
+            'EPA': 'E P A',
+            'DOT': 'D O T',
+            'DOJ': 'D O J',
+            'DHS': 'D H S',
+            'VA': 'V A',
+            'DMV': 'D M V',
+            'IRS': 'I R S',
+            'CDC': 'C D C',
+            'NIH': 'N I H',
+
+            # Sports
+            'NFL': 'N F L',
+            'NBA': 'N B A',
+            'MLB': 'M L B',
+            'NCAA': 'N C A A',
+
+            # Politics
+            'GOP': 'G O P',
+            'DNC': 'D N C',
+
+            # Media
+            'CNN': 'C N N',
+            'MSNBC': 'M S N B C',
+            'BBC': 'B B C',
+            'CBS': 'C B S',
+            'NBC': 'N B C',
+            'ABC': 'A B C',
+            'HBO': 'H B O',
+            'PBS': 'P B S',
+            'NPR': 'N P R',
+
+            # Business titles
+            'CEO': 'C E O',
+            'CFO': 'C F O',
+            'CTO': 'C T O',
+            'COO': 'C O O',
+            'CIO': 'C I O',
+            'CSO': 'C S O',
+            'CMO': 'C M O',
+
+            # General
+            'IOU': 'I O U',
+            'RSVP': 'R S V P',
+            'AKA': 'A K A',
+            'VS': 'V S',
+            'ETC': 'E T C',
+            'FYI': 'F Y I',
+            'ASAP': 'A S A P',
+            'DIY': 'D I Y',
+            'TBA': 'T B A',
+            'TBD': 'T B D',
+            'RIP': 'R I P',
+            'VIP': 'V I P',
+            'ID': 'I D',
+            'GPS': 'G P S',
+            'USB': 'U S B',
+            'LED': 'L E D',
+            'LCD': 'L C D',
+            'DVD': 'D V D',
+            'CD': 'C D',
+            'PC': 'P C',
+            'IT': 'I T',
+            'HR': 'H R',
+            'PR': 'P R',
+            'QA': 'Q A',
+            'R&D': 'R and D',
+            'B2B': 'B to B',
+            'B2C': 'B to C',
+
+            # === TECH & CLOUD GENERAL ===
+            'SaaS': 'S A A S',
+            'PaaS': 'P A A S',
+            'IaaS': 'I A A S',
+            'DevOps': 'Dev Ops',
+            'CI/CD': 'C I C D',
+            'VPC': 'V P C',
+            'CDN': 'C D N',
+            'DNS': 'D N S',
+            'SSH': 'S S H',
+            'SSL': 'S S L',
+            'TLS': 'T L S',
+            'FTP': 'F T P',
+            'SFTP': 'S F T P',
+            'HTTP': 'H T T P',
+            'HTTPS': 'H T T P S',
+            'REST': 'R E S T',
+            'SOAP': 'S O A P',
+            'GraphQL': 'G R A P H Q L',
+            'JSON': 'J S O N',
+            'XML': 'X M L',
+            'HTML': 'H T M L',
+            'CSS': 'C S S',
+            'JS': 'J S',
+            'TS': 'T S',
+            'SQL': 'S Q L',
+            'NoSQL': 'N O S Q L',
+            'BI': 'B I',
+            'ERP': 'E R P',
+            'CRM': 'C R M',
+            'CMS': 'C M S',
+            'LMS': 'L M S',
+            'POS': 'P O S',
+            'MFA': 'M F A',
+            '2FA': 'two F A',
+            'SSO': 'S S O',
+            'LDAP': 'L D A P',
+            'AD': 'A D',
+            'KPI': 'K P I',
+            'ROI': 'R O I',
+            'SLA': 'S L A',
+            'TOS': 'T O S',
+            'EULA': 'E U L A',
+            'GDPR': 'G D P R',
+            'CCPA': 'C C P A',
+            'HIPAA': 'H I P A A',
+            'SOC2': 'S O C 2',
+            'ISO': 'I S O',
+            'NIST': 'N I S T',
+
+            # === AZURE SPECIFIC ===
+            'ARM': 'A R M',
+            'AzureAD': 'Azure A D',
+            'AAD': 'A A D',
+            'EntraID': 'Entra I D',
+            'MFA': 'M F A',
+            'AppService': 'App Service',
+            'AKS': 'A K S',
+            'ACR': 'A C R',
+            'ADF': 'A D F',
+            'ADLS': 'A D L S',
+            'AIP': 'A I P',
+            'APIM': 'A P I M',
+            'ASR': 'A S R',
+            'AVD': 'A V D',
+            'WVD': 'W V D',
+            'Bicep': 'Bicep',
+            'BGInfo': 'B G Info',
+            'CDN': 'C D N',
+            'CognitiveServices': 'Cognitive Services',
+            'CosmosDB': 'Cosmos D B',
+            'Databricks': 'Data Bricks',
+            'DataFactory': 'Data Factory',
+            'DataLake': 'Data Lake',
+            'Defender': 'Defender',
+            'Sentinel': 'Sentinel',
+            'DevOps': 'Dev Ops',
+            'ADO': 'A D O',
+            'AzureDevOps': 'Azure Dev Ops',
+            'ExpressRoute': 'Express Route',
+            'FrontDoor': 'Front Door',
+            'FunctionApp': 'Function App',
+            'GD': 'G D',
+            'GDI': 'G D I',
+            'HDI': 'H D I',
+            'HDInsight': 'H D Insight',
+            'IoTHub': 'I O T Hub',
+            'IoTEdge': 'I O T Edge',
+            'KeyVault': 'Key Vault',
+            'KV': 'K V',
+            'LogAnalytics': 'Log Analytics',
+            'LA': 'L A',
+            'Monitor': 'Monitor',
+            'NSG': 'N S G',
+            'ASG': 'A S G',
+            'PowerBI': 'Power B I',
+            'PBI': 'P B I',
+            'PowerAutomate': 'Power Automate',
+            'PowerApps': 'Power Apps',
+            'PrivateEndpoint': 'Private Endpoint',
+            'PLS': 'P L S',
+            'PublicIP': 'Public I P',
+            'PIP': 'P I P',
+            'RBAC': 'R B A C',
+            'RMS': 'R M S',
+            'ResourceGroup': 'Resource Group',
+            'RG': 'R G',
+            'RouteServer': 'Route Server',
+            'SAS': 'S A S',
+            'StorageAccount': 'Storage Account',
+            'SQLDW': 'S Q L D W',
+            'Synapse': 'Synapse',
+            'VM': 'V M',
+            'VMSS': 'V M S S',
+            'VNET': 'V N E T',
+            'VirtualNetwork': 'Virtual Network',
+            'VPN': 'V P N',
+            'VWAN': 'V W A N',
+            'WAF': 'W A F',
+            'WebApp': 'Web App',
+
+            # === AWS & GCP (for comparison docs) ===
+            'EC2': 'E C 2',
+            'S3': 'S 3',
+            'RDS': 'R D S',
+            'VPC': 'V P C',
+            'IAM': 'I A M',
+            'Lambda': 'Lambda',
+            'GCP': 'G C P',
+            'GKE': 'G K E',
+            'CloudSQL': 'Cloud S Q L',
+
+            # === DEV & PROGRAMMING ===
+            'IDE': 'I D E',
+            'CLI': 'C L I',
+            'GUI': 'G U I',
+            'API': 'A P I',
+            'SDK': 'S D K',
+            'DLL': 'D L L',
+            'EXE': 'E X E',
+            'UTF': 'U T F',
+            'ASCII': 'A S C I I',
+            'OOP': 'O O P',
+            'TDD': 'T D D',
+            'BDD': 'B D D',
+            'MVC': 'M V C',
+            'MVVM': 'M V V M',
+            'JWT': 'J W T',
+            'OAuth': 'O Auth',
+            'OIDC': 'O I D C',
+            'SAML': 'S A M L',
+            'WSFed': 'W S Fed',
+            'RBAC': 'R B A C',
+            'ABAC': 'A B A C',
+            'PBAC': 'P B A C',
+            'CI': 'C I',
+            'CD': 'C D',
+            'GitOps': 'Git Ops',
+            'Infra': 'Infra',
+            'IaC': 'I a C',
+            'PaaS': 'P a a S',
+            'FaaS': 'F a a S',
+            'CaaS': 'C a a S',
+            'XaaS': 'X a a S',
+
+            # === DEVOPS TOOLS ===
+            'CI/CD': 'C I C D',
+            'VCS': 'V C S',
+            'SCM': 'S C M',
+            'JIRA': 'J I R A',
+            'Jenkins': 'Jenkins',
+            'GitHub': 'Git Hub',
+            'GitLab': 'Git Lab',
+            'Bitbucket': 'Bit Bucket',
+            'Docker': 'Docker',
+            'K8s': 'K 8 s',
+            'Kubernetes': 'Kubernetes',
+            'K8S': 'K 8 S',
+            'Helm': 'Helm',
+            'Istio': 'Istio',
+            'Prometheus': 'Prometheus',
+            'Grafana': 'Grafana',
+            'ELK': 'E L K',
+            'Splunk': 'Splunk',
+            'Datadog': 'Data Dog',
+            'NewRelic': 'New Relic',
+            'PagerDuty': 'Pager Duty',
+            'Terraform': 'Terraform',
+            'Ansible': 'Ansible',
+            'Chef': 'Chef',
+            'Puppet': 'Puppet',
+            'SaltStack': 'Salt Stack',
+            'Nagios': 'Nagios',
+            'Zabbix': 'Zabbix',
+
+            # === MONITORING & LOGGING ===
+            'APM': 'A P M',
+            'NPM': 'N P M',
+            'RUM': 'R U M',
+            'SIEM': 'S I E M',
+            'SOAR': 'S O A R',
+            'XDR': 'X D R',
+            'EDR': 'E D R',
+            'MDR': 'M D R',
+            'DDoS': 'D D o S',
+            'DoS': 'D o S',
+            'MITRE': 'M I T R E',
+            'ATT&CK': 'A T T C K',
+            'CVE': 'C V E',
+            'CVSS': 'C V S S',
+
+            # === DATABASE ===
+            'OLTP': 'O L T P',
+            'OLAP': 'O L A P',
+            'ETL': 'E T L',
+            'ELT': 'E L T',
+            'ACID': 'A C I D',
+            'BASE': 'B A S E',
+            'CAP': 'C A P',
+            'NoSQL': 'N O S Q L',
+            'CRUD': 'C R U D',
+            'ORM': 'O R M',
+            'ODBC': 'O D B C',
+            'JDBC': 'J D B C',
+            'DDL': 'D D L',
+            'DML': 'D M L',
+            'DCL': 'D C L',
+            'TCL': 'T C L',
+
+            # === NETWORKING ===
+            'LAN': 'L A N',
+            'WAN': 'W A N',
+            'VLAN': 'V L A N',
+            'VPN': 'V P N',
+            'DNS': 'D N S',
+            'DHCP': 'D H C P',
+            'NAT': 'N A T',
+            'PAT': 'P A T',
+            'SNAT': 'S N A T',
+            'DNAT': 'D N A T',
+            'TCP': 'T C P',
+            'UDP': 'U D P',
+            'ICMP': 'I C M P',
+            'IP': 'I P',
+            'IPv4': 'I P v 4',
+            'IPv6': 'I P v 6',
+            'HTTP': 'H T T P',
+            'HTTPS': 'H T T P S',
+            'FTP': 'F T P',
+            'SFTP': 'S F T P',
+            'SSH': 'S S H',
+            'Telnet': 'Telnet',
+            'SMTP': 'S M T P',
+            'POP3': 'P O P 3',
+            'IMAP': 'I M A P',
+            'MQTT': 'M Q T T',
+            'CoAP': 'C o A P',
+            'AMQP': 'A M Q P',
+            'Kafka': 'Kafka',
+            'RabbitMQ': 'Rabbit M Q',
+            'Redis': 'Redis',
+
+            # === CONTAINERS & ORCHESTRATION ===
+            'OCI': 'O C I',
+            'CRI': 'C R I',
+            'CNI': 'C N I',
+            'CSI': 'C S I',
+
+            # === CLOUD NATIVE ===
+            'CNCF': 'C N C F',
+            'OSS': 'O S S',
+            'FOSS': 'F O S S',
+            'SaaS': 'S a a S',
+            'PaaS': 'P a a S',
+            'IaaS': 'I a a S',
+            'FaaS': 'F a a S',
+            'MSP': 'M S P',
+            'CSP': 'C S P',
+
+            # === AI/ML ===
+            'AI': 'A I',
+            'ML': 'M L',
+            'DL': 'D L',
+            'NLP': 'N L P',
+            'CV': 'C V',
+            'LLM': 'L L M',
+            'GPT': 'G P T',
+            'BERT': 'B E R T',
+            'RAG': 'R A G',
+            'OCR': 'O C R',
+            'ASR': 'A S R',
+            'TTS': 'T T S',
+            'NLU': 'N L U',
+            'NLG': 'N L G',
+
+            # === SECURITY ===
+            'PKI': 'P K I',
+            'CA': 'C A',
+            'CRL': 'C R L',
+            'OCSP': 'O C S P',
+            'HSM': 'H S M',
+            'TPM': 'T P M',
+            'YubiKey': 'Yubi Key',
+            '2FA': '2 F A',
+            'MFA': 'M F A',
+            'TOTP': 'T O T P',
+            'HOTP': 'H O T P',
+            'SSO': 'S S O',
+            'IdP': 'I d P',
+            'SP': 'S P',
+            'RADIUS': 'R A D I U S',
+            'TACACS': 'T A C A C S',
+            'X.509': 'X 5 0 9',
+            'AES': 'A E S',
+            'RSA': 'R S A',
+            'ECC': 'E C C',
+            'PGP': 'P G P',
+            'GPG': 'G P G',
+            'TLS': 'T L S',
+            'SSL': 'S S L',
+            'SSH': 'S S H',
+
+            # === AGILE/PROJECT MGMT ===
+            'Scrum': 'Scrum',
+            'Kanban': 'Kanban',
+            'MVP': 'M V P',
+            'PoC': 'P o C',
+            'MOKR': 'M O K R',
+            'OKR': 'O K R',
+            'KPI': 'K P I',
+            'SLA': 'S L A',
+            'SLO': 'S L O',
+            'SLI': 'S L I',
+            'MTTR': 'M T T R',
+            'MTTF': 'M T T F',
+            'MTBF': 'M T B F',
+            'RTO': 'R T O',
+            'RPO': 'R P O',
+        }
+
+        for acronym, pronunciation in letter_acronyms.items():
+            # Use word boundaries to avoid partial matches
+            text = re.sub(r'\b' + acronym + r'\b', pronunciation, text)
+
+        return text
+
+    def _add_pause_markers(self, text):
+        """Add pause markers for more natural TTS timing"""
+        import re
+
+        # Add short pauses after common abbreviations
+        short_pause_after = [r'\b[A-Z]\.', r'\b[Mm]r\.', r'\b[Mm]s\.', r'\b[Dd]r\.',
+                             r'\b[Pp]rof\.', r'\b[Rr]ev\.', r'\b[Gg]en\.',
+                             r'\b[Ss]gt\.', r'\b[Cc]apt\.', r'\b[Lt]\.',
+                             r'\betc\.']
+        for pattern in short_pause_after:
+            text = re.sub(pattern, r'\g<0>,', text)
+
+        # Add pauses before conjunctions in long sentences
+        text = re.sub(r'\s+(and|or|but|yet|so|nor)\s+', r', \1 ', text)
+
+        # Add pauses after introductory phrases
+        intro_phrases = [r'However', r'Therefore', r'Furthermore', r'Moreover',
+                         r'Additionally', r'Consequently', r'Meanwhile', r'Nevertheless']
+        for phrase in intro_phrases:
+            text = re.sub(r'\b' + phrase + r',', r'\g<0>,', text)
+
+        # Ensure pauses after colons and semicolons
+        text = re.sub(r'[:;]', r'\g<0>,', text)
+
+        return text
 
     def get_text_stats(self, text):
         """Get text statistics"""
@@ -928,7 +3122,7 @@ class TTSGui:
 
         self.root = root
         self.root.title("High-Quality English TTS - Sherpa-ONNX Enhanced")
-        self.root.geometry("1300x1100")
+        self.root.geometry("1300x1200")
 
         # Dracula theme color scheme
         self.colors = {
@@ -962,6 +3156,7 @@ class TTSGui:
         self.audio_cache = AudioCache()
         self.performance_monitor = PerformanceMonitor()
         self.audio_stitcher = AudioStitcher(silence_duration=0.3)
+        self.audio_exporter = AudioExporter()  # Advanced audio export system
         self.thread_pool = ThreadPoolExecutor(max_workers=2)
 
         # TTS model instances
@@ -996,12 +3191,25 @@ class TTSGui:
             'normalize_whitespace': tk.BooleanVar(value=True),
             'normalize_punctuation': tk.BooleanVar(value=True),
             'remove_urls': tk.BooleanVar(value=False),
-            'remove_emails': tk.BooleanVar(value=False)
+            'remove_emails': tk.BooleanVar(value=False),
+            'remove_duplicates': tk.BooleanVar(value=False),
+            'numbers_to_words': tk.BooleanVar(value=False),
+            'expand_abbreviations': tk.BooleanVar(value=False),
+            'handle_acronyms': tk.BooleanVar(value=False),
+            'add_pauses': tk.BooleanVar(value=False)
         }
+
+        # SSML Support
+        self.ssml_processor = SSMLProcessor()
+        self.ssml_enabled = tk.BooleanVar(value=False)
+        self.ssml_auto_detect = tk.BooleanVar(value=True)
 
         # Setup theme and UI
         self.setup_theme()
         self.setup_ui()
+
+        # Setup keyboard shortcuts for power users
+        self.setup_keyboard_shortcuts()
 
         # Check available voices and populate selections (after UI is ready)
         self.check_available_voices()
@@ -1229,7 +3437,7 @@ class TTSGui:
 
         ttk.Label(speed_frame, text="⚡ Generation Speed:", style='Dark.TLabel').grid(row=0, column=0, sticky=tk.W)
         self.speed_var = tk.DoubleVar(value=1.0)
-        speed_scale = ttk.Scale(speed_frame, from_=0.5, to=2.0, variable=self.speed_var,
+        speed_scale = ttk.Scale(speed_frame, from_=0.5, to=3.0, variable=self.speed_var,
                                orient=tk.HORIZONTAL, style='Dark.Horizontal.TScale')
         speed_scale.grid(row=0, column=1, padx=(15, 10), sticky=(tk.W, tk.E))
         self.speed_label = ttk.Label(speed_frame, text="1.0x", style='Dark.TLabel')
@@ -1270,14 +3478,60 @@ class TTSGui:
                        style='Dark.TRadiobutton').grid(row=0, column=1, sticky=tk.W, padx=(0, 15))
         ttk.Checkbutton(preprocess_frame, text="Remove URLs",
                        variable=self.text_options['remove_urls'],
-                       style='Dark.TRadiobutton').grid(row=1, column=0, sticky=tk.W, padx=(0, 15))
+                       style='Dark.TRadiobutton').grid(row=0, column=2, sticky=tk.W, padx=(0, 15))
         ttk.Checkbutton(preprocess_frame, text="Remove emails",
                        variable=self.text_options['remove_emails'],
+                       style='Dark.TRadiobutton').grid(row=1, column=0, sticky=tk.W, padx=(0, 15))
+        ttk.Checkbutton(preprocess_frame, text="Remove duplicate lines",
+                       variable=self.text_options['remove_duplicates'],
                        style='Dark.TRadiobutton').grid(row=1, column=1, sticky=tk.W, padx=(0, 15))
+        ttk.Checkbutton(preprocess_frame, text="Numbers to words (123→one hundred...)",
+                       variable=self.text_options['numbers_to_words'],
+                       style='Dark.TRadiobutton').grid(row=1, column=2, sticky=tk.W, padx=(0, 15))
+        ttk.Checkbutton(preprocess_frame, text="Expand abbreviations (Dr.→Doctor)",
+                       variable=self.text_options['expand_abbreviations'],
+                       style='Dark.TRadiobutton').grid(row=2, column=0, sticky=tk.W, padx=(0, 15))
+        ttk.Checkbutton(preprocess_frame, text="Pronounce acronyms (NASA→N A S A)",
+                       variable=self.text_options['handle_acronyms'],
+                       style='Dark.TRadiobutton').grid(row=2, column=1, sticky=tk.W, padx=(0, 15))
+        ttk.Checkbutton(preprocess_frame, text="Add natural pauses",
+                       variable=self.text_options['add_pauses'],
+                       style='Dark.TRadiobutton').grid(row=2, column=2, sticky=tk.W, padx=(0, 15))
+
+        # SSML Support Frame - Professional-grade speech control
+        ssml_frame = ttk.LabelFrame(text_frame, text="🎭 SSML Support (Professional Speech Control)",
+                                   style='Dark.TLabelframe', padding="10")
+        ssml_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
+
+        # SSML controls row 1
+        ttk.Checkbutton(ssml_frame, text="Enable SSML parsing",
+                       variable=self.ssml_enabled,
+                       command=self.on_ssml_toggle,
+                       style='Dark.TRadiobutton').grid(row=0, column=0, sticky=tk.W, padx=(0, 15))
+        ttk.Checkbutton(ssml_frame, text="Auto-detect SSML markup",
+                       variable=self.ssml_auto_detect,
+                       style='Dark.TRadiobutton').grid(row=0, column=1, sticky=tk.W, padx=(0, 15))
+        
+        # SSML control buttons
+        ttk.Button(ssml_frame, text="📋 SSML Templates",
+                  command=self.show_ssml_templates,
+                  style="Dark.TButton").grid(row=0, column=2, padx=(0, 10))
+        ttk.Button(ssml_frame, text="❓ SSML Reference",
+                  command=self.show_ssml_reference,
+                  style="Dark.TButton").grid(row=0, column=3, padx=(0, 10))
+        ttk.Button(ssml_frame, text="✓ Validate SSML",
+                  command=self.validate_ssml_input,
+                  style="Dark.TButton").grid(row=0, column=4, padx=(0, 10))
+
+        # SSML info label
+        self.ssml_info_label = ttk.Label(ssml_frame, 
+                                        text="SSML enables: <emphasis>, <break>, <prosody>, <say-as>, and more",
+                                        style='Time.TLabel')
+        self.ssml_info_label.grid(row=1, column=0, columnspan=5, sticky=tk.W, pady=(5, 0))
 
         # Chunking info frame
         chunking_frame = ttk.Frame(text_frame, style='Card.TFrame', padding="8")
-        chunking_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
+        chunking_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
 
         ttk.Label(chunking_frame, text="📄 Long Text Handling:", style='Dark.TLabel').grid(row=0, column=0, sticky=tk.W)
         self.chunking_info_label = ttk.Label(chunking_frame,
@@ -1295,15 +3549,21 @@ class TTSGui:
                                                     font=('Segoe UI', 11),
                                                     borderwidth=1,
                                                     relief='solid')
-        self.text_widget.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.text_widget.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # Bind text change events for real-time validation and stats
         self.text_widget.bind('<KeyRelease>', self.on_text_change)
         self.text_widget.bind('<Button-1>', self.on_text_change)
+        
+        # Bind paste events to remove duplicate lines (multiple methods for compatibility)
+        self.text_widget.bind('<<Paste>>', self.on_paste)
+        self.text_widget.bind('<Control-v>', self.on_paste)
+        self.text_widget.bind('<Control-V>', self.on_paste)
+        self.text_widget.bind('<Shift-Insert>', self.on_paste)
 
         # Text statistics frame
         stats_frame = ttk.Frame(text_frame, style='Card.TFrame', padding="8")
-        stats_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
+        stats_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
 
         ttk.Label(stats_frame, text="📊 Text Stats:", style='Dark.TLabel').grid(row=0, column=0, sticky=tk.W)
         self.stats_label = ttk.Label(stats_frame, text="Characters: 0 | Words: 0 | Lines: 0 | Sentences: 0",
@@ -1353,6 +3613,11 @@ class TTSGui:
         self.save_btn = ttk.Button(controls_frame, text="💾 Save As...", command=self.save_audio,
                                  state=tk.DISABLED, style="Dark.TButton")
         self.save_btn.grid(row=0, column=4, padx=(0, 10))
+
+        # Keyboard shortcuts help button
+        self.shortcuts_btn = ttk.Button(controls_frame, text="⌨️ Shortcuts (F1)",
+                                       command=self.show_keyboard_shortcuts, style="Dark.TButton")
+        self.shortcuts_btn.grid(row=0, column=5, padx=(10, 0))
 
         # Audio Playback Controls Frame with enhanced styling
         playback_frame = ttk.LabelFrame(main_frame, text="🎛️ Audio Playback Controls",
@@ -1453,6 +3718,328 @@ class TTSGui:
         seek_frame.columnconfigure(1, weight=1)
         playback_speed_frame.columnconfigure(1, weight=1)
         volume_frame.columnconfigure(1, weight=1)
+
+    # ==================== Keyboard Shortcuts ====================
+
+    def setup_keyboard_shortcuts(self):
+        """
+        Setup keyboard shortcuts for power user productivity.
+        
+        Shortcuts:
+            Space         - Play/Pause audio
+            Ctrl+Enter    - Generate speech
+            Ctrl+G        - Generate speech (alternative)
+            1, 2, 3       - Speed presets (0.75x, 1.0x, 1.5x)
+            4, 5          - Speed presets (2.0x, 0.5x)
+            Alt+Up        - Previous voice model
+            Alt+Down      - Next voice model
+            Shift+Alt+Up  - Previous speaker
+            Shift+Alt+Down - Next speaker
+            Ctrl+A        - Select all text
+            Ctrl+Shift+C  - Clear text
+            Escape        - Cancel generation / Stop playback
+            F1 / Ctrl+/   - Show keyboard shortcuts help
+        """
+        # NOTE: Some shortcuts only work when focus is not in text widget
+        # to avoid conflicts with text editing
+        
+        # Global shortcuts (work anywhere in the window)
+        self.root.bind('<F1>', self.show_keyboard_shortcuts)
+        self.root.bind('<Control-slash>', self.show_keyboard_shortcuts)
+        self.root.bind('<Control-question>', self.show_keyboard_shortcuts)
+        
+        # Play/Pause with Space (only when not in text widget)
+        self.root.bind('<space>', self._on_space_key)
+        
+        # Generate with Ctrl+Enter or Ctrl+G
+        self.root.bind('<Control-Return>', self._on_ctrl_enter)
+        self.root.bind('<Control-g>', self._on_ctrl_enter)
+        self.root.bind('<Control-G>', self._on_ctrl_enter)
+        
+        # Speed presets with number keys (only when not in text widget)
+        self.root.bind('<Key-1>', lambda e: self._apply_speed_preset(e, 0.75))
+        self.root.bind('<Key-2>', lambda e: self._apply_speed_preset(e, 1.0))
+        self.root.bind('<Key-3>', lambda e: self._apply_speed_preset(e, 1.5))
+        self.root.bind('<Key-4>', lambda e: self._apply_speed_preset(e, 2.0))
+        self.root.bind('<Key-5>', lambda e: self._apply_speed_preset(e, 0.5))
+        
+        # Voice switching with Alt+Arrow keys
+        self.root.bind('<Alt-Up>', self._previous_voice_model)
+        self.root.bind('<Alt-Down>', self._next_voice_model)
+        
+        # Speaker switching with Shift+Alt+Arrow keys
+        self.root.bind('<Shift-Alt-Up>', self._previous_speaker)
+        self.root.bind('<Shift-Alt-Down>', self._next_speaker)
+        
+        # Cancel/Stop with Escape
+        self.root.bind('<Escape>', self._on_escape)
+        
+        # Clear text with Ctrl+Shift+C (different from Ctrl+C copy)
+        self.root.bind('<Control-Shift-c>', self._on_clear_text_shortcut)
+        self.root.bind('<Control-Shift-C>', self._on_clear_text_shortcut)
+        
+        # Text widget specific bindings (Ctrl+A select all already built-in)
+        # Add Ctrl+Enter in text widget to still generate
+        self.text_widget.bind('<Control-Return>', self._on_ctrl_enter)
+        
+        self.log_status("⌨️ Keyboard shortcuts enabled (press F1 for help)")
+
+    def _on_space_key(self, event):
+        """Handle Space key for play/pause toggle"""
+        # Check if focus is in a text entry widget
+        focused = self.root.focus_get()
+        if isinstance(focused, (tk.Text, ttk.Entry, tk.Entry, scrolledtext.ScrolledText)):
+            return  # Let the text widget handle it normally
+        
+        # Toggle play/pause
+        if self.is_playing:
+            self.stop_audio()
+        elif self.current_audio_file and os.path.exists(self.current_audio_file):
+            self.play_audio()
+        
+        return 'break'  # Prevent default behavior
+
+    def _on_ctrl_enter(self, event):
+        """Handle Ctrl+Enter for speech generation"""
+        # Only generate if button is enabled (not already generating)
+        if str(self.generate_btn['state']) != 'disabled':
+            self.generate_speech()
+        return 'break'
+
+    def _apply_speed_preset(self, event, speed):
+        """Apply a speed preset if not in text widget"""
+        # Check if focus is in a text entry widget
+        focused = self.root.focus_get()
+        if isinstance(focused, (tk.Text, ttk.Entry, tk.Entry, scrolledtext.ScrolledText)):
+            return  # Let the text widget handle it normally
+        
+        # Apply the speed preset
+        self.speed_var.set(speed)
+        self.update_speed_label(speed)
+        self.log_status(f"⚡ Speed preset: {speed}x")
+        return 'break'
+
+    def _previous_voice_model(self, event):
+        """Switch to previous voice model"""
+        values = self.voice_model_combo['values']
+        if not values:
+            return 'break'
+        
+        current_idx = self.voice_model_combo.current()
+        new_idx = (current_idx - 1) % len(values)
+        self.voice_model_combo.current(new_idx)
+        self.on_voice_model_changed(None)
+        
+        # Get the model name for logging
+        model_name = values[new_idx] if new_idx < len(values) else "Unknown"
+        self.log_status(f"🎤 Voice model: {model_name[:50]}...")
+        return 'break'
+
+    def _next_voice_model(self, event):
+        """Switch to next voice model"""
+        values = self.voice_model_combo['values']
+        if not values:
+            return 'break'
+        
+        current_idx = self.voice_model_combo.current()
+        new_idx = (current_idx + 1) % len(values)
+        self.voice_model_combo.current(new_idx)
+        self.on_voice_model_changed(None)
+        
+        # Get the model name for logging
+        model_name = values[new_idx] if new_idx < len(values) else "Unknown"
+        self.log_status(f"🎤 Voice model: {model_name[:50]}...")
+        return 'break'
+
+    def _previous_speaker(self, event):
+        """Switch to previous speaker"""
+        values = self.speaker_combo['values']
+        if not values:
+            return 'break'
+        
+        current_idx = self.speaker_combo.current()
+        new_idx = (current_idx - 1) % len(values)
+        self.speaker_combo.current(new_idx)
+        self.on_speaker_changed(None)
+        
+        # Get the speaker name for logging  
+        speaker_name = values[new_idx] if new_idx < len(values) else "Unknown"
+        self.log_status(f"👤 Speaker: {speaker_name[:40]}...")
+        return 'break'
+
+    def _next_speaker(self, event):
+        """Switch to next speaker"""
+        values = self.speaker_combo['values']
+        if not values:
+            return 'break'
+        
+        current_idx = self.speaker_combo.current()
+        new_idx = (current_idx + 1) % len(values)
+        self.speaker_combo.current(new_idx)
+        self.on_speaker_changed(None)
+        
+        # Get the speaker name for logging
+        speaker_name = values[new_idx] if new_idx < len(values) else "Unknown"
+        self.log_status(f"👤 Speaker: {speaker_name[:40]}...")
+        return 'break'
+
+    def _on_escape(self, event):
+        """Handle Escape key - cancel generation or stop playback"""
+        if self.generation_thread and self.generation_thread.is_alive():
+            # Cancel ongoing generation
+            self.cancel_generation()
+        elif self.is_playing:
+            # Stop audio playback
+            self.stop_audio()
+        return 'break'
+
+    def _on_clear_text_shortcut(self, event):
+        """Handle Ctrl+Shift+C for clearing text"""
+        self.clear_text()
+        return 'break'
+
+    def show_keyboard_shortcuts(self, event=None):
+        """Show keyboard shortcuts help dialog"""
+        shortcuts_window = tk.Toplevel(self.root)
+        shortcuts_window.title("Keyboard Shortcuts")
+        shortcuts_window.geometry("550x600")
+        shortcuts_window.configure(bg=self.colors['bg_primary'])
+        
+        # Make window modal
+        shortcuts_window.transient(self.root)
+        shortcuts_window.grab_set()
+        
+        # Title
+        title_label = tk.Label(
+            shortcuts_window, 
+            text="⌨️ Keyboard Shortcuts",
+            font=('Segoe UI', 16, 'bold'),
+            bg=self.colors['bg_primary'],
+            fg=self.colors['fg_primary']
+        )
+        title_label.pack(pady=(20, 5))
+        
+        # Subtitle
+        subtitle_label = tk.Label(
+            shortcuts_window,
+            text="Power user productivity features",
+            font=('Segoe UI', 10),
+            bg=self.colors['bg_primary'],
+            fg=self.colors['fg_muted']
+        )
+        subtitle_label.pack(pady=(0, 15))
+        
+        # Shortcuts content frame with scrollbar
+        content_frame = ttk.Frame(shortcuts_window, style='Dark.TFrame')
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        # Define shortcut categories
+        shortcuts_data = [
+            ("🎵 Playback Controls", [
+                ("Space", "Play / Pause audio"),
+                ("Escape", "Stop playback"),
+            ]),
+            ("🎤 Speech Generation", [
+                ("Ctrl+Enter", "Generate speech"),
+                ("Ctrl+G", "Generate speech (alternative)"),
+                ("Escape", "Cancel generation (during processing)"),
+            ]),
+            ("⚡ Speed Presets", [
+                ("1", "Set speed to 0.75x (slower)"),
+                ("2", "Set speed to 1.0x (normal)"),
+                ("3", "Set speed to 1.5x (faster)"),
+                ("4", "Set speed to 2.0x (fast)"),
+                ("5", "Set speed to 0.5x (slowest)"),
+            ]),
+            ("🔊 Voice Switching", [
+                ("Alt+↑", "Previous voice model"),
+                ("Alt+↓", "Next voice model"),
+                ("Shift+Alt+↑", "Previous speaker"),
+                ("Shift+Alt+↓", "Next speaker"),
+            ]),
+            ("📝 Text Editing", [
+                ("Ctrl+A", "Select all text"),
+                ("Ctrl+Shift+C", "Clear all text"),
+                ("Ctrl+V", "Paste (auto-removes duplicate lines)"),
+            ]),
+            ("❓ Help", [
+                ("F1", "Show this help dialog"),
+                ("Ctrl+/", "Show this help dialog (alternative)"),
+            ]),
+        ]
+        
+        # Create shortcuts display
+        for category, shortcuts in shortcuts_data:
+            # Category header
+            cat_label = tk.Label(
+                content_frame,
+                text=category,
+                font=('Segoe UI', 11, 'bold'),
+                bg=self.colors['bg_secondary'],
+                fg=self.colors['accent_cyan'],
+                anchor='w'
+            )
+            cat_label.pack(fill=tk.X, pady=(10, 5))
+            
+            # Shortcuts in this category
+            for key, description in shortcuts:
+                shortcut_frame = ttk.Frame(content_frame, style='Dark.TFrame')
+                shortcut_frame.pack(fill=tk.X, pady=2)
+                
+                # Key label (fixed width, highlighted)
+                key_label = tk.Label(
+                    shortcut_frame,
+                    text=key,
+                    font=('Consolas', 10, 'bold'),
+                    bg=self.colors['bg_tertiary'],
+                    fg=self.colors['accent_pink'],
+                    width=18,
+                    anchor='w',
+                    padx=8,
+                    pady=2
+                )
+                key_label.pack(side=tk.LEFT, padx=(10, 10))
+                
+                # Description label
+                desc_label = tk.Label(
+                    shortcut_frame,
+                    text=description,
+                    font=('Segoe UI', 10),
+                    bg=self.colors['bg_secondary'],
+                    fg=self.colors['fg_primary'],
+                    anchor='w'
+                )
+                desc_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Note about text widget
+        note_frame = ttk.Frame(shortcuts_window, style='Card.TFrame', padding=10)
+        note_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        note_label = tk.Label(
+            note_frame,
+            text="💡 Note: Number keys (1-5) and Space only work when focus is outside the text editor.\n"
+                 "     Use Ctrl+Enter to generate while typing in the text editor.",
+            font=('Segoe UI', 9),
+            bg=self.colors['bg_tertiary'],
+            fg=self.colors['fg_muted'],
+            justify=tk.LEFT
+        )
+        note_label.pack()
+        
+        # Close button
+        close_btn = ttk.Button(
+            shortcuts_window,
+            text="Close",
+            command=shortcuts_window.destroy,
+            style='Dark.TButton'
+        )
+        close_btn.pack(pady=15)
+        
+        # Allow Escape to close the window
+        shortcuts_window.bind('<Escape>', lambda e: shortcuts_window.destroy())
+        shortcuts_window.bind('<F1>', lambda e: shortcuts_window.destroy())
+        
+        return 'break'
 
     def check_available_voices(self):
         """Check which voice models are available on the system"""
@@ -1573,6 +4160,276 @@ class TTSGui:
                 self.voice_info_label.config(text=info_text)
                 break
 
+    # ==================== SSML Support Methods ====================
+    
+    def on_ssml_toggle(self):
+        """Handle SSML enable/disable toggle"""
+        if self.ssml_enabled.get():
+            self.log_status("🎭 SSML mode enabled - Use SSML markup for professional speech control")
+            self.ssml_info_label.config(
+                text="SSML active! Use tags like <break>, <emphasis>, <prosody>, <say-as>",
+                foreground=self.colors['accent_green']
+            )
+        else:
+            self.log_status("🎭 SSML mode disabled - Plain text mode")
+            self.ssml_info_label.config(
+                text="SSML enables: <emphasis>, <break>, <prosody>, <say-as>, and more",
+                foreground=self.colors['accent_cyan']
+            )
+    
+    def show_ssml_templates(self):
+        """Show SSML templates in a dialog"""
+        templates_window = tk.Toplevel(self.root)
+        templates_window.title("SSML Templates")
+        templates_window.geometry("700x600")
+        templates_window.configure(bg=self.colors['bg_primary'])
+        
+        # Make window modal
+        templates_window.transient(self.root)
+        templates_window.grab_set()
+        
+        # Title
+        title_label = tk.Label(templates_window, text="📋 SSML Templates", 
+                              font=('Segoe UI', 14, 'bold'),
+                              bg=self.colors['bg_primary'], fg=self.colors['fg_primary'])
+        title_label.pack(pady=(15, 10))
+        
+        # Description
+        desc_label = tk.Label(templates_window, 
+                             text="Click a template to insert it into the text editor",
+                             font=('Segoe UI', 10),
+                             bg=self.colors['bg_primary'], fg=self.colors['fg_muted'])
+        desc_label.pack(pady=(0, 10))
+        
+        # Template buttons frame
+        templates_frame = ttk.Frame(templates_window, style='Dark.TFrame')
+        templates_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        template_buttons = [
+            ("Basic", "basic"),
+            ("Emphasis", "emphasis"),
+            ("Prosody (Rate/Pitch)", "prosody"),
+            ("Say-As (Pronunciation)", "say_as"),
+            ("Full Example", "full_example")
+        ]
+        
+        for i, (name, template_id) in enumerate(template_buttons):
+            btn = ttk.Button(templates_frame, text=name,
+                           command=lambda tid=template_id: self._insert_ssml_template(tid, templates_window),
+                           style="Dark.TButton")
+            btn.grid(row=0, column=i, padx=5, pady=5)
+        
+        # Template preview
+        preview_label = tk.Label(templates_window, text="Template Preview:",
+                                font=('Segoe UI', 10, 'bold'),
+                                bg=self.colors['bg_primary'], fg=self.colors['fg_primary'])
+        preview_label.pack(pady=(15, 5), anchor=tk.W, padx=20)
+        
+        self.template_preview = scrolledtext.ScrolledText(
+            templates_window, width=80, height=20,
+            bg=self.colors['bg_secondary'],
+            fg=self.colors['fg_primary'],
+            font=('Consolas', 10),
+            wrap=tk.WORD
+        )
+        self.template_preview.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        # Show basic template by default
+        self.template_preview.insert(tk.END, self.ssml_processor.get_ssml_template('basic'))
+        
+        # Template selection callback
+        def show_template(template_id):
+            self.template_preview.delete(1.0, tk.END)
+            self.template_preview.insert(tk.END, self.ssml_processor.get_ssml_template(template_id))
+        
+        # Update buttons to show preview
+        for i, (name, template_id) in enumerate(template_buttons):
+            btn = templates_frame.grid_slaves(row=0, column=i)[0]
+            btn.configure(command=lambda tid=template_id: show_template(tid))
+        
+        # Insert button
+        insert_btn = ttk.Button(templates_window, text="📥 Insert Selected Template",
+                               command=lambda: self._insert_template_from_preview(templates_window),
+                               style="Primary.TButton")
+        insert_btn.pack(pady=15)
+        
+        # Close button
+        close_btn = ttk.Button(templates_window, text="Close",
+                              command=templates_window.destroy,
+                              style="Dark.TButton")
+        close_btn.pack(pady=(0, 15))
+    
+    def _insert_ssml_template(self, template_id, window=None):
+        """Insert an SSML template into the text editor"""
+        template = self.ssml_processor.get_ssml_template(template_id)
+        
+        # Clear and insert
+        self.text_widget.delete(1.0, tk.END)
+        self.text_widget.insert(1.0, template)
+        
+        # Enable SSML mode
+        self.ssml_enabled.set(True)
+        self.on_ssml_toggle()
+        
+        # Update stats
+        self.on_text_change(None)
+        
+        self.log_status(f"📋 Inserted SSML template: {template_id}")
+        
+        if window:
+            window.destroy()
+    
+    def _insert_template_from_preview(self, window):
+        """Insert template from preview text widget"""
+        if hasattr(self, 'template_preview'):
+            template_text = self.template_preview.get(1.0, tk.END).strip()
+            if template_text:
+                self.text_widget.delete(1.0, tk.END)
+                self.text_widget.insert(1.0, template_text)
+                self.ssml_enabled.set(True)
+                self.on_ssml_toggle()
+                self.on_text_change(None)
+                self.log_status("📋 Inserted SSML template from preview")
+        window.destroy()
+    
+    def show_ssml_reference(self):
+        """Show SSML reference documentation in a dialog"""
+        ref_window = tk.Toplevel(self.root)
+        ref_window.title("SSML Reference Guide")
+        ref_window.geometry("750x700")
+        ref_window.configure(bg=self.colors['bg_primary'])
+        
+        # Make window modal
+        ref_window.transient(self.root)
+        ref_window.grab_set()
+        
+        # Title
+        title_label = tk.Label(ref_window, text="❓ SSML Quick Reference Guide",
+                              font=('Segoe UI', 14, 'bold'),
+                              bg=self.colors['bg_primary'], fg=self.colors['fg_primary'])
+        title_label.pack(pady=(15, 10))
+        
+        # Subtitle
+        subtitle_label = tk.Label(ref_window,
+                                 text="Speech Synthesis Markup Language (W3C Standard)",
+                                 font=('Segoe UI', 10),
+                                 bg=self.colors['bg_primary'], fg=self.colors['fg_muted'])
+        subtitle_label.pack(pady=(0, 10))
+        
+        # Reference text
+        ref_text = scrolledtext.ScrolledText(
+            ref_window, width=85, height=35,
+            bg=self.colors['bg_secondary'],
+            fg=self.colors['fg_primary'],
+            font=('Consolas', 10),
+            wrap=tk.WORD
+        )
+        ref_text.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        # Insert reference content
+        ref_text.insert(tk.END, self.ssml_processor.get_ssml_reference())
+        ref_text.config(state=tk.DISABLED)
+        
+        # Close button
+        close_btn = ttk.Button(ref_window, text="Close",
+                              command=ref_window.destroy,
+                              style="Dark.TButton")
+        close_btn.pack(pady=15)
+    
+    def validate_ssml_input(self):
+        """Validate the current text as SSML"""
+        text = self.text_widget.get(1.0, tk.END).strip()
+        
+        if not text:
+            messagebox.showinfo("SSML Validation", "No text to validate.")
+            return
+        
+        # Check if it looks like SSML
+        if not self.ssml_processor.is_ssml(text):
+            response = messagebox.askyesno(
+                "SSML Validation",
+                "The text doesn't appear to contain SSML markup.\n\n"
+                "Would you like to wrap it in <speak> tags?"
+            )
+            if response:
+                wrapped_text = f"<speak>\n    {text}\n</speak>"
+                self.text_widget.delete(1.0, tk.END)
+                self.text_widget.insert(1.0, wrapped_text)
+                self.ssml_enabled.set(True)
+                self.on_ssml_toggle()
+                self.log_status("✓ Text wrapped in SSML <speak> tags")
+            return
+        
+        # Parse and validate
+        result = self.ssml_processor.parse_ssml(text)
+        
+        if result['errors']:
+            error_msg = "SSML Validation Errors:\n\n" + "\n".join(result['errors'])
+            messagebox.showerror("SSML Validation Failed", error_msg)
+            self.log_status(f"✗ SSML validation failed: {result['errors'][0]}")
+        else:
+            info_msg = f"✓ SSML is valid!\n\n"
+            info_msg += f"Extracted text length: {len(result['text'])} characters\n"
+            info_msg += f"Number of segments: {len(result['segments'])}\n"
+            
+            if result['has_prosody_changes']:
+                info_msg += f"Average rate adjustment: {result['rate']:.2f}x\n"
+            
+            # Show segment info
+            if result['segments']:
+                unique_features = set()
+                for seg in result['segments']:
+                    if seg.get('is_break'):
+                        unique_features.add('breaks')
+                    if seg.get('emphasis'):
+                        unique_features.add(f"emphasis: {seg['emphasis']}")
+                    if seg.get('interpret_as'):
+                        unique_features.add(f"say-as: {seg['interpret_as']}")
+                    if seg.get('phoneme'):
+                        unique_features.add('phoneme hints')
+                    if seg.get('voice_hint'):
+                        unique_features.add('voice hints')
+                
+                if unique_features:
+                    info_msg += f"\nFeatures detected: {', '.join(unique_features)}"
+            
+            messagebox.showinfo("SSML Validation", info_msg)
+            self.log_status("✓ SSML validation passed")
+            
+            # Enable SSML mode if not already enabled
+            if not self.ssml_enabled.get():
+                self.ssml_enabled.set(True)
+                self.on_ssml_toggle()
+    
+    def process_ssml_text(self, text):
+        """
+        Process SSML text and return plain text with prosody adjustments.
+        
+        Returns:
+            dict with 'text' (processed plain text) and 'rate' (suggested speed multiplier)
+        """
+        # Check if SSML processing is enabled or auto-detect is on
+        should_process = self.ssml_enabled.get() or (
+            self.ssml_auto_detect.get() and self.ssml_processor.is_ssml(text)
+        )
+        
+        if not should_process:
+            return {'text': text, 'rate': 1.0, 'was_processed': False}
+        
+        # Parse SSML
+        result = self.ssml_processor.parse_ssml(text)
+        
+        if result['errors']:
+            self.log_status(f"⚠ SSML parsing warnings: {result['errors'][0]}")
+        
+        if result['text'] != text:
+            self.log_status(f"🎭 SSML processed: {len(text)} chars → {len(result['text'])} chars")
+            if result['has_prosody_changes']:
+                self.log_status(f"   Rate adjustment: {result['rate']:.2f}x")
+        
+        result['was_processed'] = True
+        return result
+
     def preview_voice(self):
         """Preview the selected voice with sample text"""
         if not self.selected_voice_config:
@@ -1614,6 +4471,53 @@ class TTSGui:
         if self.current_sound and self.is_playing:
             self.current_sound.set_volume(float(value) / 100.0)
 
+    def on_paste(self, event):
+        """Handle paste operation to remove duplicate consecutive lines"""
+        try:
+            # Get clipboard content
+            clipboard_text = self.root.clipboard_get()
+            
+            if not clipboard_text:
+                return None  # Allow default behavior for empty clipboard
+            
+            # Remove duplicate consecutive lines
+            lines = clipboard_text.split('\n')
+            cleaned_lines = []
+            prev_line = None
+            duplicates_removed = 0
+            
+            for line in lines:
+                stripped = line.strip()
+                # Only skip if the stripped line is non-empty and matches the previous
+                if stripped and stripped == prev_line:
+                    duplicates_removed += 1
+                    continue  # Skip duplicate
+                cleaned_lines.append(line)
+                prev_line = stripped
+            
+            cleaned_text = '\n'.join(cleaned_lines)
+            
+            # Insert cleaned text at cursor position
+            self.text_widget.insert(tk.INSERT, cleaned_text)
+            
+            # Log if duplicates were removed
+            if duplicates_removed > 0:
+                self.log_status(f"✓ Removed {duplicates_removed} duplicate line(s) from pasted text")
+            
+            # Update text stats
+            self.on_text_change(None)
+            
+            # Return "break" to prevent default paste behavior
+            return "break"
+            
+        except tk.TclError:
+            # Clipboard is empty or inaccessible, allow default behavior
+            return None
+        except Exception as e:
+            # Log any other errors but allow default paste
+            self.log_status(f"⚠ Error processing paste: {str(e)}")
+            return None
+    
     def on_text_change(self, event):
         """Handle text changes for real-time validation and stats"""
         text = self.text_widget.get(1.0, tk.END).strip()
@@ -1626,7 +4530,10 @@ class TTSGui:
         # Update chunking information
         if self.text_processor.needs_chunking(text):
             # Use current model type for chunking preview
-            model_type = self.model_var.get()
+            if self.selected_voice_config:
+                model_type = self.selected_voice_config[1]["model_type"]
+            else:
+                model_type = "matcha"  # Default
             chunks = self.text_processor.split_text_into_chunks(text, model_type)
             chunk_info = f"Will split into {len(chunks)} chunks for {model_type.upper()} model"
             self.chunking_info_label.config(text=chunk_info, foreground=self.colors['accent_orange'])
@@ -1640,6 +4547,24 @@ class TTSGui:
             self.validation_label.config(text="✓ Ready", foreground=self.colors['accent_green'])
         else:
             self.validation_label.config(text=f"⚠ {error_msg}", foreground=self.colors['accent_orange'])
+
+        # Update SSML detection status
+        if text and self.ssml_auto_detect.get():
+            if self.ssml_processor.is_ssml(text):
+                self.ssml_info_label.config(
+                    text="🎭 SSML markup detected - will be processed automatically",
+                    foreground=self.colors['accent_green']
+                )
+            elif self.ssml_enabled.get():
+                self.ssml_info_label.config(
+                    text="SSML mode enabled but no markup detected",
+                    foreground=self.colors['accent_orange']
+                )
+            else:
+                self.ssml_info_label.config(
+                    text="SSML enables: <emphasis>, <break>, <prosody>, <say-as>, and more",
+                    foreground=self.colors['accent_cyan']
+                )
 
     def import_text(self):
         """Import text from file"""
@@ -2020,6 +4945,20 @@ class TTSGui:
 
             if text != raw_text:
                 self.log_status("🔧 Text preprocessed for optimal synthesis")
+
+            # Check for cancellation
+            if self.generation_cancelled:
+                return
+
+            # Process SSML if enabled or auto-detected
+            ssml_result = self.process_ssml_text(text)
+            if ssml_result['was_processed']:
+                text = ssml_result['text']
+                # Apply SSML rate adjustment to generation speed
+                if ssml_result.get('rate', 1.0) != 1.0:
+                    # Combine with user-selected speed
+                    ssml_rate = ssml_result['rate']
+                    self.log_status(f"🎭 SSML prosody: applying {ssml_rate:.2f}x rate adjustment")
 
             # Check for cancellation
             if self.generation_cancelled:
@@ -2713,10 +5652,215 @@ class TTSGui:
         self.log_status("⏸ Playback paused")
 
     def save_audio(self):
-        """Save audio to file"""
-        if self.current_audio_file and os.path.exists(self.current_audio_file):
+        """Save audio to file - opens advanced export options dialog"""
+        if self.audio_data is None or len(self.audio_data) == 0:
+            messagebox.showwarning("No Audio", "No audio to save. Generate speech first.")
+            return
+        
+        # Get original text for chapter detection
+        original_text = self.text_widget.get(1.0, tk.END).strip()
+        
+        # Show advanced export dialog
+        dialog = ExportOptionsDialog(
+            self.root,
+            self.audio_exporter,
+            self.audio_data,
+            self.sample_rate,
+            self.colors,
+            original_text
+        )
+        
+        export_options = dialog.show()
+        
+        if not export_options:
+            return  # User cancelled
+        
+        # Determine save location based on split mode
+        split_mode = export_options.get('split_mode', 'none')
+        fmt = export_options.get('format', 'wav')
+        fmt_config = self.audio_exporter.FORMATS.get(fmt, {})
+        ext = fmt_config.get('extension', '.wav')
+        
+        if split_mode == 'none':
+            # Single file export
             file_path = filedialog.asksaveasfilename(
                 title="Save Audio As",
+                defaultextension=ext,
+                initialdir="audio_output",
+                filetypes=[
+                    (f"{fmt.upper()} files", f"*{ext}"),
+                    ("All files", "*.*")
+                ]
+            )
+            
+            if file_path:
+                self._export_single_file(file_path, export_options)
+        else:
+            # Multiple file export - choose directory
+            output_dir = filedialog.askdirectory(
+                title="Select Output Directory for Split Files",
+                initialdir="audio_output"
+            )
+            
+            if output_dir:
+                self._export_split_files(output_dir, export_options)
+    
+    def _export_single_file(self, file_path, options):
+        """Export audio as a single file"""
+        try:
+            fmt = options.get('format', 'wav')
+            
+            export_options = {
+                'target_sample_rate': options.get('target_sample_rate', self.sample_rate),
+                'normalize': options.get('normalize', False),
+                'metadata': options.get('metadata', {}),
+            }
+            
+            if 'bitrate' in options:
+                export_options['bitrate'] = options['bitrate']
+            
+            self.log_status(f"💾 Exporting to {fmt.upper()}...")
+            
+            success, message, output_path = self.audio_exporter.export(
+                self.audio_data,
+                self.sample_rate,
+                file_path,
+                fmt,
+                export_options
+            )
+            
+            if success:
+                file_size = os.path.getsize(output_path) / 1024  # KB
+                self.log_status(f"✓ {message}")
+                self.log_status(f"  File size: {file_size:.1f} KB")
+                messagebox.showinfo("Export Complete", f"Audio exported successfully!\n\n{output_path}")
+            else:
+                self.log_status(f"✗ Export failed: {message}")
+                messagebox.showerror("Export Failed", message)
+                
+        except Exception as e:
+            self.log_status(f"✗ Export error: {str(e)}")
+            messagebox.showerror("Export Error", f"Failed to export audio:\n{str(e)}")
+    
+    def _export_split_files(self, output_dir, options):
+        """Export audio as multiple split files"""
+        try:
+            split_mode = options.get('split_mode', 'silence')
+            fmt = options.get('format', 'wav')
+            
+            # Prepare segments based on split mode
+            if split_mode == 'silence':
+                silence_settings = options.get('silence_settings', {})
+                min_silence = silence_settings.get('min_silence_len', 500)
+                threshold = silence_settings.get('silence_thresh', -40)
+                
+                self.log_status(f"🔍 Detecting silence regions (threshold: {threshold}dB, min: {min_silence}ms)...")
+                
+                segments = self.audio_exporter.split_by_silence(
+                    self.audio_data,
+                    self.sample_rate,
+                    min_silence_len=min_silence,
+                    silence_thresh=threshold
+                )
+                
+                self.log_status(f"  Found {len(segments)} segment(s)")
+                
+                # Convert to (title, audio) format
+                audio_segments = [(f"Track {i:02d}", seg) for i, seg in enumerate(segments, 1)]
+                
+            elif split_mode == 'chapters':
+                chapters = options.get('chapters', [])
+                
+                if not chapters:
+                    self.log_status("⚠ No chapters detected, exporting as single file...")
+                    self._export_single_file(
+                        os.path.join(output_dir, f"audio.{fmt}"),
+                        options
+                    )
+                    return
+                
+                self.log_status(f"📚 Splitting by {len(chapters)} chapter(s)...")
+                
+                # For chapter splitting, we need to estimate timing
+                # Calculate approximate timing based on text position
+                audio_duration_ms = len(self.audio_data) * 1000 // self.sample_rate
+                
+                chapter_markers = []
+                current_time = 0
+                
+                for i, ch in enumerate(chapters):
+                    chapter_markers.append({
+                        'start_ms': current_time,
+                        'title': ch.get('title', f'Chapter {i+1}')
+                    })
+                    # Estimate time for this chapter (proportional to text)
+                    if i < len(chapters) - 1:
+                        # Use roughly equal distribution for simplicity
+                        current_time += audio_duration_ms // len(chapters)
+                
+                audio_segments = self.audio_exporter.split_by_chapters(
+                    self.audio_data,
+                    self.sample_rate,
+                    chapter_markers
+                )
+            else:
+                # Fallback - single segment
+                audio_segments = [("Full Audio", self.audio_data)]
+            
+            # Export all segments
+            export_options = {
+                'sample_rate': self.sample_rate,
+                'target_sample_rate': options.get('target_sample_rate', self.sample_rate),
+                'normalize': options.get('normalize', False),
+                'metadata': options.get('metadata', {}),
+            }
+            
+            if 'bitrate' in options:
+                export_options['bitrate'] = options['bitrate']
+            
+            base_name = options.get('metadata', {}).get('title', 'audio') or 'audio'
+            base_name = re.sub(r'[<>:"/\\|?*]', '', base_name)[:30]
+            
+            self.log_status(f"💾 Exporting {len(audio_segments)} file(s) to {fmt.upper()}...")
+            
+            results = self.audio_exporter.export_multiple_tracks(
+                audio_segments,
+                output_dir,
+                base_name,
+                fmt,
+                export_options
+            )
+            
+            # Report results
+            success_count = sum(1 for r in results if r[0])
+            fail_count = len(results) - success_count
+            
+            for success, message, path in results:
+                if success:
+                    file_size = os.path.getsize(path) / 1024 if path else 0
+                    self.log_status(f"  ✓ {os.path.basename(path)} ({file_size:.1f} KB)")
+                else:
+                    self.log_status(f"  ✗ {message}")
+            
+            self.log_status(f"✓ Export complete: {success_count} succeeded, {fail_count} failed")
+            
+            if success_count > 0:
+                messagebox.showinfo(
+                    "Export Complete",
+                    f"Successfully exported {success_count} file(s) to:\n{output_dir}"
+                )
+            else:
+                messagebox.showerror("Export Failed", "All exports failed. Check the status log for details.")
+                
+        except Exception as e:
+            self.log_status(f"✗ Split export error: {str(e)}")
+            messagebox.showerror("Export Error", f"Failed to export split files:\n{str(e)}")
+    
+    def save_audio_quick(self):
+        """Quick save to WAV (original simple export behavior)"""
+        if self.current_audio_file and os.path.exists(self.current_audio_file):
+            file_path = filedialog.asksaveasfilename(
+                title="Quick Save as WAV",
                 defaultextension=".wav",
                 initialdir="audio_output",
                 filetypes=[("WAV files", "*.wav"), ("All files", "*.*")]
@@ -2724,8 +5868,6 @@ class TTSGui:
 
             if file_path:
                 try:
-                    # Copy temporary file to chosen location
-                    import shutil
                     shutil.copy2(self.current_audio_file, file_path)
                     self.log_status(f"💾 Audio saved to: {file_path}")
                 except Exception as e:

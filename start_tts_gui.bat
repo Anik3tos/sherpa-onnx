@@ -1,4 +1,7 @@
 @echo off
+echo Installing required dependencies...
+pip install pygame sherpa-onnx soundfile numpy -q
+echo.
 echo Starting High-Quality English TTS GUI...
 echo.
 echo Make sure you have the following models downloaded:
