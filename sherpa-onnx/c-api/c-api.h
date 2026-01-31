@@ -484,6 +484,23 @@ SHERPA_ONNX_API typedef struct SherpaOnnxOfflineOmnilingualAsrCtcModelConfig {
   const char *model;
 } SherpaOnnxOfflineOmnilingualAsrCtcModelConfig;
 
+SHERPA_ONNX_API typedef struct SherpaOnnxOfflineFunASRNanoModelConfig {
+  const char *encoder_adaptor;
+  const char *llm;
+  const char *embedding;
+  const char *tokenizer;
+  const char *system_prompt;
+  const char *user_prompt;
+  int32_t max_new_tokens;
+  float temperature;
+  float top_p;
+  int32_t seed;
+} SherpaOnnxOfflineFunASRNanoModelConfig;
+
+SHERPA_ONNX_API typedef struct SherpaOnnxOfflineMedAsrCtcModelConfig {
+  const char *model;
+} SherpaOnnxOfflineMedAsrCtcModelConfig;
+
 SHERPA_ONNX_API typedef struct SherpaOnnxOfflineModelConfig {
   SherpaOnnxOfflineTransducerModelConfig transducer;
   SherpaOnnxOfflineParaformerModelConfig paraformer;
@@ -511,6 +528,8 @@ SHERPA_ONNX_API typedef struct SherpaOnnxOfflineModelConfig {
   SherpaOnnxOfflineCanaryModelConfig canary;
   SherpaOnnxOfflineWenetCtcModelConfig wenet_ctc;
   SherpaOnnxOfflineOmnilingualAsrCtcModelConfig omnilingual;
+  SherpaOnnxOfflineMedAsrCtcModelConfig medasr;
+  SherpaOnnxOfflineFunASRNanoModelConfig funasr_nano;
 } SherpaOnnxOfflineModelConfig;
 
 SHERPA_ONNX_API typedef struct SherpaOnnxOfflineRecognizerConfig {
@@ -666,6 +685,11 @@ SHERPA_ONNX_API typedef struct SherpaOnnxOfflineRecognizerResult {
   // Pointer to continuous memory which holds durations (in seconds) for each
   // token It is NULL if the model does not support durations
   float *durations;
+
+  // Pointer to continuous memory which holds log probabilities (confidence)
+  // for each token. It is NULL if the model does not support probabilities.
+  // ys_log_probs[i] is the log probability for token i.
+  float *ys_log_probs;
 } SherpaOnnxOfflineRecognizerResult;
 
 /// Get the result of the offline stream.
@@ -1063,11 +1087,11 @@ SHERPA_ONNX_API typedef struct SherpaOnnxOfflineTtsKittenModelConfig {
 
 SHERPA_ONNX_API typedef struct SherpaOnnxOfflineTtsZipvoiceModelConfig {
   const char *tokens;
-  const char *text_model;
-  const char *flow_matching_model;
+  const char *encoder;
+  const char *decoder;
   const char *vocoder;
   const char *data_dir;
-  const char *pinyin_dict;
+  const char *lexicon;
   float feat_scale;
   float t_shift;
   float target_rms;

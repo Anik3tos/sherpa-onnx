@@ -386,7 +386,7 @@ class OfflineTtsMatchaImpl : public OfflineTtsImpl {
     if (meta_data.is_zh_en) {
       frontend_ = std::make_unique<MatchaTtsLexicon>(
           mgr, config_.model.matcha.lexicon, config_.model.matcha.tokens,
-          config_.model.matcha.data_dir, config_.model.debug);
+          config_.model.matcha.data_dir, config_.model.debug, false);
     } else if (meta_data.jieba) {
       frontend_ = std::make_unique<CharacterLexicon>(
           mgr, config_.model.matcha.lexicon, config_.model.matcha.tokens,
@@ -407,7 +407,7 @@ class OfflineTtsMatchaImpl : public OfflineTtsImpl {
     if (meta_data.is_zh_en) {
       frontend_ = std::make_unique<MatchaTtsLexicon>(
           config_.model.matcha.lexicon, config_.model.matcha.tokens,
-          config_.model.matcha.data_dir, config_.model.debug);
+          config_.model.matcha.data_dir, config_.model.debug, false);
     } else if (meta_data.jieba) {
       frontend_ = std::make_unique<CharacterLexicon>(
           config_.model.matcha.lexicon, config_.model.matcha.tokens,
@@ -433,6 +433,15 @@ class OfflineTtsMatchaImpl : public OfflineTtsImpl {
     x.reserve(num_tokens);
     for (const auto &k : tokens) {
       x.insert(x.end(), k.begin(), k.end());
+    }
+
+    if (config_.model.debug) {
+      std::ostringstream oss;
+      for (int32_t i : x) {
+        oss << i << ", ";
+      }
+      oss << "\n";
+      SHERPA_ONNX_LOGE("%s\n", oss.str().c_str());
     }
 
     auto memory_info =

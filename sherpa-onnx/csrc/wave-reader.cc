@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "sherpa-onnx/csrc/file-utils.h"
 #include "sherpa-onnx/csrc/macros.h"
 
 namespace sherpa_onnx {
@@ -336,6 +337,17 @@ std::vector<std::vector<float>> ReadWaveImpl(std::istream &is,
 
 std::vector<float> ReadWave(const std::string &filename, int32_t *sampling_rate,
                             bool *is_ok) {
+  *is_ok = false;
+  if (filename.empty()) {
+    SHERPA_ONNX_LOGE("Filename is empty");
+    return {};
+  }
+
+  if (!FileExists(filename)) {
+    SHERPA_ONNX_LOGE("Filename '%s' does not exist", filename.c_str());
+    return {};
+  }
+
   std::ifstream is(filename, std::ifstream::binary);
   return ReadWave(is, sampling_rate, is_ok);
 }
@@ -343,6 +355,10 @@ std::vector<float> ReadWave(const std::string &filename, int32_t *sampling_rate,
 std::vector<float> ReadWave(std::istream &is, int32_t *sampling_rate,
                             bool *is_ok) {
   auto samples = ReadWaveImpl(is, sampling_rate, is_ok);
+
+  if (!*is_ok || samples.empty()) {
+    return {};
+  }
 
   if (samples.size() > 1) {
     SHERPA_ONNX_LOGE(

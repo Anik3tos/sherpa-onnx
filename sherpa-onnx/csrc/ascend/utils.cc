@@ -50,8 +50,10 @@ static const char *AclDataTypeToString(aclDataType data_type) {
       return "ACL_COMPLEX128";
     case ACL_BF16:
       return "ACL_BF16";
+#if defined(ACL_INT4)
     case ACL_INT4:
       return "ACL_INT4";
+#endif
     case ACL_UINT1:
       return "ACL_UINT1";
     case ACL_COMPLEX32:
@@ -264,7 +266,7 @@ std::string AclModel::GetInfo() const {
     size_t size_in_bytes = aclmdlGetInputSizeByIndex(desc_->Get(), i);
 
     os << " size in bytes: " << size_in_bytes << "\n";
-    os << " size in MB:    " << size_in_bytes / 1024 / 1024 << "\n";
+    os << " size in MB:    " << size_in_bytes / 1024. / 1024 << "\n";
 
     const char *name = aclmdlGetInputNameByIndex(desc_->Get(), i);
     os << " name: " << name << "\n";
@@ -348,11 +350,14 @@ AclDataBuffer::AclDataBuffer(void *data, size_t size) {
   }
 }
 
-AclDataBuffer::~AclDataBuffer() {
+AclDataBuffer::~AclDataBuffer() { Release(); }
+
+void AclDataBuffer::Release() {
   if (p_) {
     aclError ret = aclDestroyDataBuffer(p_);
     SHERPA_ONNX_ASCEND_CHECK(ret, "Failed to call aclDestroyDataBuffer");
   }
+  p_ = nullptr;
 }
 
 AclTensorDesc::AclTensorDesc(aclDataType data_type, int num_dims,

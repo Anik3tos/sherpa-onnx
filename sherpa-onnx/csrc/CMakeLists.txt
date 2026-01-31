@@ -25,6 +25,8 @@ set(sources
   keyword-spotter-impl.cc
   keyword-spotter.cc
   lodr-fst.cc
+  math.cc
+  normal-data-generator.cc
   offline-canary-model-config.cc
   offline-canary-model.cc
   offline-ctc-fst-decoder-config.cc
@@ -38,6 +40,8 @@ set(sources
   offline-fire-red-asr-model.cc
   offline-lm-config.cc
   offline-lm.cc
+  offline-medasr-ctc-model-config.cc
+  offline-medasr-ctc-model.cc
   offline-model-config.cc
   offline-moonshine-greedy-search-decoder.cc
   offline-moonshine-model-config.cc
@@ -130,6 +134,7 @@ set(sources
   ten-vad-model-config.cc
   ten-vad-model.cc
   text-utils.cc
+  timer.cc
   transducer-keyword-decoder.cc
   transpose.cc
   unbind.cc
@@ -179,7 +184,9 @@ list(APPEND sources
 )
 if(SHERPA_ONNX_ENABLE_RKNN)
   list(APPEND sources
+    ./rknn/context-blocking-queue-rknn.cc
     ./rknn/offline-sense-voice-model-rknn.cc
+    ./rknn/offline-paraformer-model-rknn.cc
     ./rknn/online-stream-rknn.cc
     ./rknn/online-transducer-greedy-search-decoder-rknn.cc
     ./rknn/online-transducer-modified-beam-search-decoder-rknn.cc
@@ -189,10 +196,29 @@ if(SHERPA_ONNX_ENABLE_RKNN)
     ./rknn/transducer-keyword-decoder-rknn.cc
     ./rknn/utils.cc
   )
-
 endif()
 
-if(SHERPA_ONNX_ENABLE_RKNN OR SHERPA_ONNX_ENABLE_ASCEND_NPU OR SHERPA_ONNX_ENABLE_QNN)
+if(SHERPA_ONNX_ENABLE_AXERA)
+  list(APPEND sources
+    ./axera/ax-engine-guard.cc
+    ./axera/offline-sense-voice-model-axera.cc
+    ./axera/utils.cc
+  )
+endif()
+
+if(SHERPA_ONNX_ENABLE_AXCL)
+  list(APPEND sources
+    ./axcl/axcl-engine-guard.cc
+    ./axcl/axcl-engine-io-guard.cc
+    ./axcl/axcl-engine-io-info-guard.cc
+    ./axcl/axcl-manager.cc
+    ./axcl/axcl-model.cc
+    ./axcl/offline-sense-voice-model-axcl.cc
+    ./axcl/utils.cc
+  )
+endif()
+
+if(SHERPA_ONNX_ENABLE_RKNN OR SHERPA_ONNX_ENABLE_ASCEND_NPU OR SHERPA_ONNX_ENABLE_QNN OR SHERPA_ONNX_ENABLE_AXERA OR SHERPA_ONNX_ENABLE_AXCL)
   list(APPEND sources
     ./rknn/offline-ctc-greedy-search-decoder-rknn.cc
   )
@@ -202,18 +228,29 @@ if(SHERPA_ONNX_ENABLE_ASCEND_NPU)
   list(APPEND sources
     ./ascend/offline-paraformer-model-ascend.cc
     ./ascend/offline-sense-voice-model-ascend.cc
+    ./ascend/offline-whisper-model-ascend.cc
+    ./ascend/offline-zipformer-ctc-model-ascend.cc
     ./ascend/utils.cc
   )
 endif()
 
 if(SHERPA_ONNX_ENABLE_QNN)
   list(APPEND sources
+    ./qnn/offline-sense-voice-model-qnn.cc
+    ./qnn/offline-paraformer-model-qnn.cc
+    ./qnn/offline-zipformer-ctc-model-qnn.cc
     ./qnn/qnn-backend.cc
     ./qnn/qnn-model.cc
     ./qnn/utils.cc
-    ./qnn/offline-sense-voice-model-qnn.cc
   )
 endif()
+
+list(APPEND sources
+  offline-funasr-nano-model-config.cc
+  offline-funasr-nano-model.cc
+  offline-recognizer-funasr-nano-impl.cc
+  funasr-nano-tokenizer.cc
+)
 
 if(SHERPA_ONNX_ENABLE_TTS)
   list(APPEND sources
@@ -233,13 +270,15 @@ if(SHERPA_ONNX_ENABLE_TTS)
     offline-tts-matcha-model-config.cc
     offline-tts-matcha-model.cc
     offline-tts-model-config.cc
+    offline-tts-pocket-model-config.cc
+    offline-tts-pocket-model.cc
     offline-tts-vits-model-config.cc
     offline-tts-vits-model.cc
-    offline-tts-zipvoice-frontend.cc
     offline-tts-zipvoice-model-config.cc
     offline-tts-zipvoice-model.cc
     offline-tts.cc
     piper-phonemize-lexicon.cc
+    sentence-piece-tokenizer.cc
     vocoder.cc
     vocos-vocoder.cc
   )
@@ -321,6 +360,38 @@ if(SHERPA_ONNX_ENABLE_RKNN)
   endif()
 endif()
 
+if(SHERPA_ONNX_ENABLE_AXERA)
+  if(DEFINED ENV{SHERPA_ONNX_AXERA_LIB_DIR})
+    target_link_libraries(sherpa-onnx-core
+      -L$ENV{SHERPA_ONNX_AXERA_LIB_DIR}
+      -lax_engine
+      -lax_interpreter
+      -lax_sys
+      -lpthread
+    )
+  else()
+    target_link_libraries(sherpa-onnx-core
+      ax_engine
+      ax_interpreter
+      ax_sys
+      pthread
+    )
+  endif()
+endif()
+
+if(SHERPA_ONNX_ENABLE_AXCL)
+  if(DEFINED ENV{SHERPA_ONNX_AXCL_LIB_DIR})
+    target_link_libraries(sherpa-onnx-core
+      -L$ENV{SHERPA_ONNX_AXCL_LIB_DIR}
+      -laxcl_rt
+      )
+  else()
+    target_link_libraries(sherpa-onnx-core
+      axcl_rt
+    )
+  endif()
+endif()
+
 if(SHERPA_ONNX_ENABLE_ASCEND_NPU)
     target_include_directories(sherpa-onnx-core PRIVATE ${ASCEND_TOOLKIT_HOME}/include)
     target_link_libraries(sherpa-onnx-core
@@ -331,6 +402,14 @@ endif()
 
 if(SHERPA_ONNX_ENABLE_QNN)
   target_include_directories(sherpa-onnx-core PRIVATE ${QNN_SDK_ROOT}/include/QNN)
+endif()
+
+if(SHERPA_ONNX_ENABLE_SPACEMIT)
+  if(TARGET spacemit_ep)
+    target_link_libraries(sherpa-onnx-core spacemit_ep)
+  else()
+    target_link_libraries(sherpa-onnx-core ${spacemit_ep_lib_files})
+  endif()
 endif()
 
 if(TARGET onnxruntime)
@@ -351,7 +430,6 @@ target_link_libraries(sherpa-onnx-core fstfar fst)
 
 if(SHERPA_ONNX_ENABLE_TTS)
   target_link_libraries(sherpa-onnx-core
-    cppinyin_core
     piper_phonemize)
 endif()
 
@@ -705,6 +783,7 @@ if(SHERPA_ONNX_ENABLE_TESTS)
     cat-test.cc
     circular-buffer-test.cc
     context-graph-test.cc
+    math-test.cc
     packed-sequence-test.cc
     pad-sequence-test.cc
     regex-lang-test.cc
@@ -715,10 +794,11 @@ if(SHERPA_ONNX_ENABLE_TESTS)
     transpose-test.cc
     unbind-test.cc
     utfcpp-test.cc
+    wave-reader-test.cc
   )
   if(SHERPA_ONNX_ENABLE_TTS)
     list(APPEND sherpa_onnx_test_srcs
-      offline-tts-zipvoice-frontend-test.cc
+      sentence-piece-tokenizer-test.cc
       piper-phonemize-test.cc
     )
   endif()

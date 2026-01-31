@@ -4,8 +4,9 @@
 
 #include "sherpa-onnx/csrc/matcha-tts-lexicon.h"
 
+#include <ctype.h>
+
 #include <algorithm>
-#include <codecvt>
 #include <fstream>
 #include <memory>
 #include <regex>  // NOLINT
@@ -38,6 +39,101 @@
 
 namespace sherpa_onnx {
 
+namespace {
+// Please see https://github.com/k2-fsa/sherpa-onnx/pull/2853
+// for why we need to do the replacement
+static const std::vector<std::pair<std::string, std::string>> kReplacements = {
+    {"ɝ", "ɜɹ"}, {"ɚ", "əɹ"},
+
+    {"eɪ", "A"}, {"aɪ", "I"}, {"ɔɪ", "Y"},
+    {"oʊ", "O"}, {"əʊ", "O"}, {"aʊ", "W"},
+
+    {"tʃ", "ʧ"}, {"dʒ", "ʤ"},
+
+    {"ː", ""},
+
+    {"g", "ɡ"},  {"r", "ɹ"},
+
+    {"e", "ɛ"},
+};
+
+std::string Utf32ToUtf8(char32_t cp) {
+  std::string out;
+
+  if (cp <= 0x7F) {
+    out.push_back(static_cast<char>(cp));
+  } else if (cp <= 0x7FF) {
+    out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+    out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+  } else if (cp <= 0xFFFF) {
+    out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+    out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+    out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+  } else {
+    out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+    out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+    out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+    out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+  }
+
+  return out;
+}
+
+std::vector<std::string> ConvertPhonemesToUTF8(
+    const std::vector<std::vector<char32_t>> &phonemes) {
+  std::vector<std::string> out;
+
+  for (const auto &word : phonemes) {
+    for (char32_t cp : word) {
+      out.push_back(Utf32ToUtf8(cp));
+    }
+  }
+
+  return out;
+}
+
+std::string ApplyReplacements(std::string s) {
+  for (const auto &p : kReplacements) {
+    const std::string &from = p.first;
+    const std::string &to = p.second;
+
+    size_t pos = 0;
+    while ((pos = s.find(from, pos)) != std::string::npos) {
+      s.replace(pos, from.size(), to);
+      pos += to.size();
+    }
+  }
+  return s;
+}
+
+std::vector<std::string> SplitTokensUTF8(const std::string &s) {
+  std::vector<std::string> out;
+
+  for (size_t i = 0; i < s.size();) {
+    unsigned char c = s[i];
+    size_t len = (c < 0x80) ? 1 : (c < 0xE0) ? 2 : (c < 0xF0) ? 3 : 4;
+
+    out.push_back(s.substr(i, len));
+    i += len;
+  }
+
+  return out;
+}
+
+std::vector<std::string> ProcessPhonemes(
+    const std::vector<std::vector<char32_t>> &phonemes, bool skip_replacement) {
+  auto tokens = ConvertPhonemesToUTF8(phonemes);
+  if (skip_replacement) {
+    return tokens;
+  }
+
+  std::string joined = Join(tokens);
+  std::string replaced = ApplyReplacements(joined);
+  return SplitTokensUTF8(replaced);
+}
+
+}  // namespace
+
 void CallPhonemizeEspeak(const std::string &text,
                          piper::eSpeakPhonemeConfig &config,  // NOLINT
                          std::vector<std::vector<piper::Phoneme>> *phonemes);
@@ -45,8 +141,8 @@ void CallPhonemizeEspeak(const std::string &text,
 class MatchaTtsLexicon::Impl {
  public:
   Impl(const std::string &lexicon, const std::string &tokens,
-       const std::string &data_dir, bool debug)
-      : debug_(debug) {
+       const std::string &data_dir, bool debug, bool skip_replacement)
+      : debug_(debug), skip_replacement_(skip_replacement) {
     if (lexicon.empty()) {
       SHERPA_ONNX_LOGE("Please provide lexicon.txt for this model");
       SHERPA_ONNX_EXIT(-1);
@@ -69,8 +165,8 @@ class MatchaTtsLexicon::Impl {
 
   template <typename Manager>
   Impl(Manager *mgr, const std::string &lexicon, const std::string &tokens,
-       const std::string &data_dir, bool debug)
-      : debug_(debug) {
+       const std::string &data_dir, bool debug, bool skip_replacement)
+      : debug_(debug), skip_replacement_(skip_replacement) {
     if (lexicon.empty()) {
       SHERPA_ONNX_LOGE("Please provide lexicon.txt for this model");
       SHERPA_ONNX_EXIT(-1);
@@ -103,7 +199,7 @@ class MatchaTtsLexicon::Impl {
   std::vector<TokenIDs> ConvertTextToTokenIds(const std::string &_text) const {
     std::string text = _text;
     std::vector<std::pair<std::string, std::string>> replace_str_pairs = {
-        {"，", ","}, {"、", ","}, {"；", ";"}, {"：", ":"},
+        {"，", ","}, {"、", ","}, {"；", ";"}, {"：", ","},   {":", ","},
         {"。", "."}, {"？", "?"}, {"！", "!"}, {"\\s+", " "},
     };
     for (const auto &p : replace_str_pairs) {
@@ -189,7 +285,10 @@ class MatchaTtsLexicon::Impl {
 
     PhraseMatcher matcher(&all_words_, words, debug_);
 
+    int32_t blank = token2id_.at(" ");
+
     std::vector<int32_t> ids;
+    std::string last_word;
     for (const std::string &w : matcher) {
       ids = ConvertWordToIds(w);
 
@@ -199,7 +298,13 @@ class MatchaTtsLexicon::Impl {
 #else
         SHERPA_ONNX_LOGE("Ignore OOV '%s'", w.c_str());
 #endif
+
+        last_word = w;
         continue;
+      }
+
+      if (!last_word.empty() && isalpha(last_word[0])) {
+        this_sentence.push_back(blank);
       }
 
       this_sentence.insert(this_sentence.end(), ids.begin(), ids.end());
@@ -220,6 +325,8 @@ class MatchaTtsLexicon::Impl {
         ans.emplace_back(std::move(this_sentence));
         this_sentence = {};
       }
+
+      last_word = w;
     }  // for (const std::string &w : matcher)
 
     if (!this_sentence.empty()) {
@@ -246,28 +353,25 @@ class MatchaTtsLexicon::Impl {
           }
         }
       } else {
-        SHERPA_ONNX_LOGE("use espeak for %s", w.c_str());
+        if (debug_) {
+          SHERPA_ONNX_LOGE("use espeak for %s", w.c_str());
+        }
         // use espeak
         piper::eSpeakPhonemeConfig config;
         config.voice = "en-us";
         std::vector<std::vector<piper::Phoneme>> phonemes;
         CallPhonemizeEspeak(w, config, &phonemes);
-        for (const auto &ps : phonemes) {
-          for (const auto &p : ps) {
-            if (phoneme2id_.count(p)) {
-              ans.push_back(phoneme2id_.at(p));
-            } else {
-              SHERPA_ONNX_LOGE(
-                  "Skip unknown phonemes. Unicode codepoint: \\U+%04x. for %s",
-                  static_cast<uint32_t>(p), w.c_str());
-            }
+
+        auto pp = ProcessPhonemes(phonemes, skip_replacement_);
+
+        for (const auto &p : pp) {
+          if (token2id_.count(p)) {
+            ans.push_back(token2id_.at(p));
+          } else {
+            SHERPA_ONNX_LOGE("Skip token: %s", p.c_str());
           }
         }
       }
-    }
-
-    if (IsAlphaOrPunct(w.front())) {
-      ans.push_back(token2id_.at(" "));
     }
 
     if (debug_) {
@@ -292,29 +396,6 @@ class MatchaTtsLexicon::Impl {
     if (debug_) {
       for (const auto &p : token2id_) {
         id2token_[p.second] = p.first;
-      }
-    }
-
-    std::wstring_convert<std::codecvt_utf8<char32_t>, char32_t> conv;
-    std::u32string s;
-    for (const auto &p : token2id_) {
-      if ((p.first.front() == '<' && p.first.back() == '>') ||
-          p.first.back() == '1' || p.first.back() == '2' ||
-          p.first.back() == '3' || p.first.back() == '4' ||
-          p.first.back() == '5') {
-        continue;
-      }
-      s = conv.from_bytes(p.first);
-
-      if (s.size() != 1) {
-        SHERPA_ONNX_LOGE("Error for token %s with id %d", p.first.c_str(),
-                         p.second);
-        SHERPA_ONNX_EXIT(-1);
-      }
-
-      char32_t c = s[0];
-      if (!phoneme2id_.count(c)) {
-        phoneme2id_.insert({c, p.second});
       }
     }
   }
@@ -394,25 +475,29 @@ class MatchaTtsLexicon::Impl {
 
   // tokens.txt is saved in token2id_
   std::unordered_map<std::string, int32_t> token2id_;
-  std::unordered_map<char32_t, int32_t> phoneme2id_;
 
   std::unordered_map<int32_t, std::string> id2token_;
 
   bool debug_ = false;
+  bool skip_replacement_ = false;
 };  // namespace sherpa_onnx
 
 MatchaTtsLexicon::~MatchaTtsLexicon() = default;
 
 MatchaTtsLexicon::MatchaTtsLexicon(const std::string &lexicon,
                                    const std::string &tokens,
-                                   const std::string &data_dir, bool debug)
-    : impl_(std::make_unique<Impl>(lexicon, tokens, data_dir, debug)) {}
+                                   const std::string &data_dir, bool debug,
+                                   bool skip_replacement)
+    : impl_(std::make_unique<Impl>(lexicon, tokens, data_dir, debug,
+                                   skip_replacement)) {}
 
 template <typename Manager>
 MatchaTtsLexicon::MatchaTtsLexicon(Manager *mgr, const std::string &lexicon,
                                    const std::string &tokens,
-                                   const std::string &data_dir, bool debug)
-    : impl_(std::make_unique<Impl>(mgr, lexicon, tokens, data_dir, debug)) {}
+                                   const std::string &data_dir, bool debug,
+                                   bool skip_replacement)
+    : impl_(std::make_unique<Impl>(mgr, lexicon, tokens, data_dir, debug,
+                                   skip_replacement)) {}
 
 std::vector<TokenIDs> MatchaTtsLexicon::ConvertTextToTokenIds(
     const std::string &text, const std::string & /*unused_voice = ""*/) const {
@@ -424,7 +509,7 @@ template MatchaTtsLexicon::MatchaTtsLexicon(AAssetManager *mgr,
                                             const std::string &lexicon,
                                             const std::string &tokens,
                                             const std::string &data_dir,
-                                            bool debug);
+                                            bool debug, bool skip_replacement);
 #endif
 
 #if __OHOS__
@@ -432,7 +517,7 @@ template MatchaTtsLexicon::MatchaTtsLexicon(NativeResourceManager *mgr,
                                             const std::string &lexicon,
                                             const std::string &tokens,
                                             const std::string &data_dir,
-                                            bool debug);
+                                            bool debug, bool skip_replacement);
 #endif
 
 }  // namespace sherpa_onnx

@@ -13,6 +13,9 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 
+const val MIN_TTS_SPEED = 0.1f
+const val MAX_TTS_SPEED = 5.0f
+
 object TtsEngine {
     var tts: OfflineTts? = null
 
@@ -176,6 +179,16 @@ object TtsEngine {
         // dataDir = "kitten-nano-en-v0_1-fp16/espeak-ng-data"
         // lang = "eng"
         // isKitten = true
+
+        // Example 12
+        // matcha-icefall-zh-en
+        // https://k2-fsa.github.io/sherpa/onnx/tts/all/Chinese-English/matcha-icefall-zh-en.html
+        // modelDir = "matcha-icefall-zh-en"
+        // acousticModelName = "model-steps-3.onnx"
+        // vocoder = "vocos-16khz-univ.onnx"
+        // dataDir = "matcha-icefall-zh-en/espeak-ng-data"
+        // lexicon = "lexicon.txt"
+        // lang = "zho"
     }
 
     fun createTts(context: Context) {

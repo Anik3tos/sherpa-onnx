@@ -22,6 +22,7 @@ data class OfflineTransducerModelConfig(
 
 data class OfflineParaformerModelConfig(
     var model: String = "",
+    var qnnConfig: QnnConfig = QnnConfig(),
 )
 
 data class OfflineNemoEncDecCtcModelConfig(
@@ -34,6 +35,7 @@ data class OfflineDolphinModelConfig(
 
 data class OfflineZipformerCtcModelConfig(
     var model: String = "",
+    var qnnConfig: QnnConfig = QnnConfig(),
 )
 
 data class OfflineWenetCtcModelConfig(
@@ -42,6 +44,23 @@ data class OfflineWenetCtcModelConfig(
 
 data class OfflineOmnilingualAsrCtcModelConfig(
     var model: String = "",
+)
+
+data class OfflineMedAsrCtcModelConfig(
+    var model: String = "",
+)
+
+data class OfflineFunAsrNanoModelConfig(
+    var encoderAdaptor: String = "",
+    var llm: String = "",
+    var embedding: String = "",
+    var tokenizer: String = "",
+    var systemPrompt: String = "You are a helpful assistant.",
+    var userPrompt: String = "语音转写：",
+    var maxNewTokens: Int = 512,
+    var temperature: Float = 1e-6f,
+    var topP: Float = 0.8f,
+    var seed: Int = 42,
 )
 
 data class OfflineWhisperModelConfig(
@@ -76,6 +95,7 @@ data class OfflineSenseVoiceModelConfig(
     var model: String = "",
     var language: String = "",
     var useInverseTextNormalization: Boolean = true,
+    var qnnConfig: QnnConfig = QnnConfig(),
 )
 
 data class OfflineModelConfig(
@@ -90,6 +110,8 @@ data class OfflineModelConfig(
     var zipformerCtc: OfflineZipformerCtcModelConfig = OfflineZipformerCtcModelConfig(),
     var wenetCtc: OfflineWenetCtcModelConfig = OfflineWenetCtcModelConfig(),
     var omnilingual: OfflineOmnilingualAsrCtcModelConfig = OfflineOmnilingualAsrCtcModelConfig(),
+    var medasr: OfflineMedAsrCtcModelConfig = OfflineMedAsrCtcModelConfig(),
+    var funasrNano: OfflineFunAsrNanoModelConfig = OfflineFunAsrNanoModelConfig(),
     var canary: OfflineCanaryModelConfig = OfflineCanaryModelConfig(),
     var teleSpeech: String = "",
     var numThreads: Int = 1,
@@ -144,24 +166,7 @@ class OfflineRecognizer(
     }
 
     fun getResult(stream: OfflineStream): OfflineRecognizerResult {
-        val objArray = getResult(stream.ptr)
-
-        val text = objArray[0] as String
-        val tokens = objArray[1] as Array<String>
-        val timestamps = objArray[2] as FloatArray
-        val lang = objArray[3] as String
-        val emotion = objArray[4] as String
-        val event = objArray[5] as String
-        val durations = objArray[6] as FloatArray
-        return OfflineRecognizerResult(
-            text = text,
-            tokens = tokens,
-            timestamps = timestamps,
-            lang = lang,
-            emotion = emotion,
-            event = event,
-            durations = durations,
-        )
+        return getResult(stream.ptr)
     }
 
     fun decode(stream: OfflineStream) = decode(ptr, stream.ptr)
@@ -185,12 +190,15 @@ class OfflineRecognizer(
 
     private external fun decode(ptr: Long, streamPtr: Long)
 
-    private external fun getResult(streamPtr: Long): Array<Any>
+    private external fun getResult(streamPtr: Long): OfflineRecognizerResult
 
     companion object {
         init {
             System.loadLibrary("sherpa-onnx-jni")
         }
+
+        @JvmStatic
+        external fun prependAdspLibraryPath(newPath: String) // for qnn
     }
 }
 
@@ -400,7 +408,7 @@ fun getOfflineModelConfig(type: Int): OfflineModelConfig? {
         }
 
         15 -> {
-            val modelDir = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
+            val modelDir = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17"
             return OfflineModelConfig(
                 senseVoice = OfflineSenseVoiceModelConfig(
                     model = "$modelDir/model.int8.onnx",
@@ -717,7 +725,8 @@ fun getOfflineModelConfig(type: Int): OfflineModelConfig? {
         }
 
         42 -> {
-            val modelDir = "sherpa-onnx-wenetspeech-yue-u2pp-conformer-ctc-zh-en-cantonese-int8-2025-09-10"
+            val modelDir =
+                "sherpa-onnx-wenetspeech-yue-u2pp-conformer-ctc-zh-en-cantonese-int8-2025-09-10"
             return OfflineModelConfig(
                 wenetCtc = OfflineWenetCtcModelConfig(
                     model = "$modelDir/model.int8.onnx",
@@ -744,6 +753,487 @@ fun getOfflineModelConfig(type: Int): OfflineModelConfig? {
                     model = "$modelDir/model.int8.onnx",
                 ),
                 tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        45 -> {
+            val modelDir = "sherpa-onnx-medasr-ctc-en-int8-2025-12-25"
+            return OfflineModelConfig(
+                medasr = OfflineMedAsrCtcModelConfig(
+                    model = "$modelDir/model.int8.onnx",
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        46 -> {
+            val modelDir = "sherpa-onnx-funasr-nano-int8-2025-12-30"
+            return OfflineModelConfig(
+                funasrNano = OfflineFunAsrNanoModelConfig(
+                    encoderAdaptor = "$modelDir/encoder_adaptor.int8.onnx",
+                    llm = "$modelDir/llm.int8.onnx",
+                    embedding = "$modelDir/embedding.int8.onnx",
+                    tokenizer = "$modelDir/Qwen3-0.6B",
+                ),
+                tokens = "",
+            )
+        }
+
+        9000 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-5-seconds-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                senseVoice = OfflineSenseVoiceModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        // Please copy libQnnHtp.so and libQnnSystem.so to jniLibs/arm64-v8a by yourself
+                        //
+                        // model.bin is created in the first run and is used from the second run
+                        // to speed up the initialization
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+                debug = true,
+            )
+        }
+
+        9001 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-8-seconds-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                senseVoice = OfflineSenseVoiceModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+                debug = true,
+            )
+        }
+
+        9002 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-10-seconds-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                senseVoice = OfflineSenseVoiceModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+                debug = true,
+            )
+        }
+
+        9003 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-13-seconds-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                senseVoice = OfflineSenseVoiceModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        9004 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-15-seconds-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                senseVoice = OfflineSenseVoiceModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        9005 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-18-seconds-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                senseVoice = OfflineSenseVoiceModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        9006 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-20-seconds-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                senseVoice = OfflineSenseVoiceModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        9007 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-23-seconds-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                senseVoice = OfflineSenseVoiceModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        9008 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-25-seconds-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                senseVoice = OfflineSenseVoiceModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        9009 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-28-seconds-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                senseVoice = OfflineSenseVoiceModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        9010 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-30-seconds-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                senseVoice = OfflineSenseVoiceModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        9011 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-5-seconds-zipformer-ctc-zh-2025-07-03-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                zipformerCtc = OfflineZipformerCtcModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+                debug = true,
+            )
+        }
+
+        9012 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-8-seconds-zipformer-ctc-zh-2025-07-03-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                zipformerCtc = OfflineZipformerCtcModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+                debug = true,
+            )
+        }
+
+        9013 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-10-seconds-zipformer-ctc-zh-2025-07-03-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                zipformerCtc = OfflineZipformerCtcModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+                debug = true,
+            )
+        }
+
+        9014 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-13-seconds-zipformer-ctc-zh-2025-07-03-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                zipformerCtc = OfflineZipformerCtcModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        9015 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-15-seconds-zipformer-ctc-zh-2025-07-03-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                zipformerCtc = OfflineZipformerCtcModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        9016 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-18-seconds-zipformer-ctc-zh-2025-07-03-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                zipformerCtc = OfflineZipformerCtcModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        9017 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-20-seconds-zipformer-ctc-zh-2025-07-03-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                zipformerCtc = OfflineZipformerCtcModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        9018 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-23-seconds-zipformer-ctc-zh-2025-07-03-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                zipformerCtc = OfflineZipformerCtcModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        9019 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-25-seconds-zipformer-ctc-zh-2025-07-03-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                zipformerCtc = OfflineZipformerCtcModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        9020 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-28-seconds-zipformer-ctc-zh-2025-07-03-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                zipformerCtc = OfflineZipformerCtcModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        9021 -> {
+            val modelDir =
+                "sherpa-onnx-qnn-30-seconds-zipformer-ctc-zh-2025-07-03-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                zipformerCtc = OfflineZipformerCtcModelConfig(
+                    model = "$modelDir/libmodel.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        9022 -> {
+            // for Xiaomi 17 Pro
+            val modelDir =
+                "sherpa-onnx-qnn-SM8850-binary-10-seconds-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8"
+            return OfflineModelConfig(
+                provider = "qnn",
+                senseVoice = OfflineSenseVoiceModelConfig(
+                    qnnConfig = QnnConfig(
+                        // Please copy libQnnHtp.so and libQnnSystem.so to jniLibs/arm64-v8a by yourself
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/model.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+                debug = true,
+            )
+        }
+
+        9023 -> {
+            val modelDir = "sherpa-onnx-qnn-5-seconds-paraformer-zh-2023-03-28-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                paraformer = OfflineParaformerModelConfig(
+                    model = "$modelDir/libencoder.so,$modelDir/libpredictor.so,$modelDir/libdecoder.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        // The following three *.bin files are generated during the first run
+                        // and are used to replace the corresponding *.so files in later runs
+                        contextBinary = "$modelDir/encoder.bin,$modelDir/predictor.bin,$modelDir/decoder.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+                debug = true,
+            )
+        }
+
+        9024 -> {
+            val modelDir = "sherpa-onnx-qnn-5-seconds-paraformer-zh-2025-10-07-int8-android-aarch64"
+            return OfflineModelConfig(
+                provider = "qnn",
+                paraformer = OfflineParaformerModelConfig(
+                    model = "$modelDir/libencoder.so,$modelDir/libpredictor.so,$modelDir/libdecoder.so",
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        // The following three *.bin files are generated during the first run
+                        // and are used to replace the corresponding *.so files in later runs
+                        contextBinary = "$modelDir/encoder.bin,$modelDir/predictor.bin,$modelDir/decoder.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+                debug = true,
+            )
+        }
+
+        9025 -> {
+            // for Xiaomi 17 Pro
+            val modelDir = "sherpa-onnx-qnn-SM8850-binary-5-seconds-paraformer-zh-2023-03-28-int8"
+            return OfflineModelConfig(
+                provider = "qnn",
+                paraformer = OfflineParaformerModelConfig(
+                    qnnConfig = QnnConfig(
+                        backendLib = "libQnnHtp.so",
+                        systemLib = "libQnnSystem.so",
+                        contextBinary = "$modelDir/encoder.bin,$modelDir/predictor.bin,$modelDir/decoder.bin",
+                    ),
+                ),
+                tokens = "$modelDir/tokens.txt",
+                debug = true,
             )
         }
     }

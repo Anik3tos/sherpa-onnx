@@ -8,8 +8,10 @@
 #include <algorithm>
 #include <cassert>
 #include <cctype>
+#include <charconv>
 #include <codecvt>
 #include <cstdint>
+#include <cstdlib>
 #include <cwctype>
 #include <limits>
 #include <locale>
@@ -733,6 +735,17 @@ std::vector<std::string> SplitString(const std::string &s, int32_t chunk_size) {
   return ans;
 }
 
+std::string Join(const std::vector<std::string> &ss, const std::string &delim) {
+  std::ostringstream oss;
+  if (!ss.empty()) {
+    oss << ss[0];
+    for (size_t i = 1; i < ss.size(); ++i) {
+      oss << delim << ss[i];
+    }
+  }
+  return oss.str();
+}
+
 std::u32string Utf8ToUtf32(const std::string &str) {
   std::wstring_convert<std::codecvt_utf8<char32_t>, char32_t> conv;
   return conv.from_bytes(str);
@@ -816,6 +829,39 @@ bool IsPunct(const std::string &s) {
       "。", "！", "？", "“", "”", "‘",  "’",
   };
   return puncts.count(s);
+}
+
+int32_t ToIntOrDefault(const std::string &s, int32_t default_value) {
+  int32_t value = default_value;
+  auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), value);
+
+  if (ec != std::errc() || ptr != s.data() + s.size()) {
+    return default_value;
+  }
+
+  return value;
+}
+
+float ToFloatOrDefault(const std::string &s, float default_value) {
+  if (s.empty()) {
+    return default_value;
+  }
+
+  char *end = nullptr;
+  errno = 0;
+  float value = std::strtof(s.c_str(), &end);
+
+  // No conversion or out of range
+  if (end == s.c_str() || errno == ERANGE) {
+    return default_value;
+  }
+
+  // Reject trailing garbage (optional but recommended)
+  if (*end != '\0') {
+    return default_value;
+  }
+
+  return value;
 }
 
 }  // namespace sherpa_onnx

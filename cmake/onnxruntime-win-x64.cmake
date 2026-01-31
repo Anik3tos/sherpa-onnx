@@ -15,18 +15,17 @@ if(NOT BUILD_SHARED_LIBS)
   message(FATAL_ERROR "This file is for building shared libraries. BUILD_SHARED_LIBS: ${BUILD_SHARED_LIBS}")
 endif()
 
-set(onnxruntime_URL  "https://github.com/microsoft/onnxruntime/releases/download/v1.17.1/onnxruntime-win-x64-1.17.1.zip")
-set(onnxruntime_URL2 "https://hf-mirror.com/csukuangfj/onnxruntime-libs/resolve/main/onnxruntime-win-x64-1.17.1.zip")
-set(onnxruntime_HASH "SHA256=4802af9598db02153d7da39432a48823ff69b2fb4b59155461937f20782aa91c")
+set(onnxruntime_URL  "https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip")
+set(onnxruntime_HASH "SHA256=0b38df9af21834e41e73d602d90db5cb06dbd1ca618948b8f1d66d607ac9f3cd")
 
 # If you don't have access to the Internet,
 # please download onnxruntime to one of the following locations.
 # You can add more if you want.
 set(possible_file_locations
-  $ENV{HOME}/Downloads/onnxruntime-win-x64-1.17.1.zip
-  ${CMAKE_SOURCE_DIR}/onnxruntime-win-x64-1.17.1.zip
-  ${CMAKE_BINARY_DIR}/onnxruntime-win-x64-1.17.1.zip
-  /tmp/onnxruntime-win-x64-1.17.1.zip
+  $ENV{HOME}/Downloads/onnxruntime-win-x64-1.23.2.zip
+  ${CMAKE_SOURCE_DIR}/onnxruntime-win-x64-1.23.2.zip
+  ${CMAKE_BINARY_DIR}/onnxruntime-win-x64-1.23.2.zip
+  /tmp/onnxruntime-win-x64-1.23.2.zip
 )
 
 foreach(f IN LISTS possible_file_locations)
@@ -34,7 +33,6 @@ foreach(f IN LISTS possible_file_locations)
     set(onnxruntime_URL  "${f}")
     file(TO_CMAKE_PATH "${onnxruntime_URL}" onnxruntime_URL)
     message(STATUS "Found local downloaded onnxruntime: ${onnxruntime_URL}")
-    set(onnxruntime_URL2)
     break()
   endif()
 endforeach()
@@ -42,7 +40,6 @@ endforeach()
 FetchContent_Declare(onnxruntime
   URL
     ${onnxruntime_URL}
-    ${onnxruntime_URL2}
   URL_HASH          ${onnxruntime_HASH}
 )
 

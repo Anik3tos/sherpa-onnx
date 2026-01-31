@@ -23,10 +23,10 @@
 
 namespace sherpa_onnx {
 
-static OfflineRecognitionResult Convert(const OfflineCtcDecoderResult &src,
-                                        const SymbolTable &sym_table,
-                                        int32_t frame_shift_ms,
-                                        int32_t subsampling_factor) {
+OfflineRecognitionResult Convert(const OfflineCtcDecoderResult &src,
+                                 const SymbolTable &sym_table,
+                                 int32_t frame_shift_ms,
+                                 int32_t subsampling_factor) {
   OfflineRecognitionResult r;
   r.tokens.reserve(src.tokens.size());
   r.timestamps.reserve(src.timestamps.size());
@@ -36,6 +36,11 @@ static OfflineRecognitionResult Convert(const OfflineCtcDecoderResult &src,
   for (int32_t i = 0; i != src.tokens.size(); ++i) {
     if (sym_table.Contains("SIL") && src.tokens[i] == sym_table["SIL"]) {
       // tdnn models from yesno have a SIL token, we should remove it.
+      continue;
+    }
+
+    if (sym_table.Contains("</s>") && src.tokens[i] == sym_table["</s>"]) {
+      // Skip </s> for Google MedASR
       continue;
     }
     auto sym = sym_table[src.tokens[i]];
@@ -56,6 +61,10 @@ static OfflineRecognitionResult Convert(const OfflineCtcDecoderResult &src,
 
   if (sym_table.IsByteBpe()) {
     text = sym_table.DecodeByteBpe(text);
+  }
+
+  if (!text.empty() && text.front() == ' ') {
+    text.erase(0, 1);
   }
 
   r.text = std::move(text);
@@ -142,6 +151,17 @@ class OfflineRecognizerCtcImpl : public OfflineRecognizerImpl {
       // WeNet CTC models assume input samples are in the range
       // [-32768, 32767], so we set normalize_samples to false
       config_.feat_config.normalize_samples = false;
+    }
+
+    if (!config_.model_config.medasr.model.empty()) {
+      config_.feat_config.low_freq = 125;
+      config_.feat_config.high_freq = 7500;
+      config_.feat_config.remove_dc_offset = false;
+      config_.feat_config.dither = 0;
+      config_.feat_config.preemph_coeff = 0;
+      config_.feat_config.window_type = "hanning";
+      config_.feat_config.feature_dim = 128;
+      config_.feat_config.snip_edges = true;
     }
 
     config_.feat_config.nemo_normalize_type =

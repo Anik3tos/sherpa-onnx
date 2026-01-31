@@ -3,7 +3,7 @@ name: export-sense-voice-to-ascend-npu
 on:
   push:
     branches:
-      - cann-7.0
+      - ci-export-whisper-ascend-npu-2
   workflow_dispatch:
 
 concurrency:
@@ -11,149 +11,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  generate_build_matrix:
+    if: github.repository_owner == 'csukuangfj' || github.repository_owner == 'k2-fsa'
+    # see https://github.com/pytorch/pytorch/pull/50633
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generating build matrix
+        id: set-matrix
+        run: |
+          # outputting for debugging purposes
+          python3 .github/scripts/export-ascend/generate_sense_voice.py
+          MATRIX=$(python3 .github/scripts/export-ascend/generate_sense_voice.py)
+
+          # deprecated
+          # echo "::set-output name=matrix::${MATRIX}"
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+
   export-sense-voice-to-ascend-npu:
+    needs: generate_build_matrix
     if: github.repository_owner == 'k2-fsa' || github.repository_owner == 'csukuangfj'
     name: ${{ matrix.framework }} ${{ matrix.soc_version }} ${{ matrix.cann }}
     runs-on: ubuntu-latest
-
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # ===== Ascend 910B =====
-          - soc_version: "910B"
-            image: "quay.io/ascend/cann:7.0.1.beta1-910b-ubuntu22.04-py3.8"
-            framework: "FunASR"
-            cann: "7.0"
-
-          - soc_version: "910B"
-            image: "quay.io/ascend/cann:7.0.1.beta1-910b-ubuntu22.04-py3.8"
-            framework: "WSYue-ASR"
-            cann: "7.0"
-
-          - soc_version: "910B"
-            image: "gpustack/ascendai-cann:8.0.RC3-910b-ubuntu20.04-py3.9"
-            framework: "FunASR"
-            cann: "8.0"
-
-          - soc_version: "910B"
-            image: "gpustack/ascendai-cann:8.0.RC3-910b-ubuntu20.04-py3.9"
-            framework: "WSYue-ASR"
-            cann: "8.0"
-
-          - soc_version: "910B"
-            image: "gpustack/devel-ascendai-cann:8.2.rc1-910b-ubuntu20.04-v2"
-            framework: "FunASR"
-            cann: "8.2"
-
-          - soc_version: "910B"
-            image: "gpustack/devel-ascendai-cann:8.2.rc1-910b-ubuntu20.04-v2"
-            framework: "WSYue-ASR"
-            cann: "8.2"
-
-          # ===== Ascend 910B2 =====
-          - soc_version: "910B2"
-            image: "quay.io/ascend/cann:7.0.1.beta1-910b-ubuntu22.04-py3.8"
-            framework: "FunASR"
-            cann: "7.0"
-
-          - soc_version: "910B2"
-            image: "quay.io/ascend/cann:7.0.1.beta1-910b-ubuntu22.04-py3.8"
-            framework: "WSYue-ASR"
-            cann: "7.0"
-
-          - soc_version: "910B2"
-            image: "gpustack/ascendai-cann:8.0.RC3-910b-ubuntu20.04-py3.9"
-            framework: "FunASR"
-            cann: "8.0"
-
-          - soc_version: "910B2"
-            image: "gpustack/ascendai-cann:8.0.RC3-910b-ubuntu20.04-py3.9"
-            framework: "WSYue-ASR"
-            cann: "8.0"
-
-          - soc_version: "910B2"
-            image: "gpustack/devel-ascendai-cann:8.2.rc1-910b-ubuntu20.04-v2"
-            framework: "FunASR"
-            cann: "8.2"
-
-          - soc_version: "910B2"
-            image: "gpustack/devel-ascendai-cann:8.2.rc1-910b-ubuntu20.04-v2"
-            framework: "WSYue-ASR"
-            cann: "8.2"
-
-          # ===== Ascend 910B3 =====
-          - soc_version: "910B3"
-            image: "quay.io/ascend/cann:7.0.1.beta1-910b-ubuntu22.04-py3.8"
-            framework: "FunASR"
-            cann: "7.0"
-
-          - soc_version: "910B3"
-            image: "quay.io/ascend/cann:7.0.1.beta1-910b-ubuntu22.04-py3.8"
-            framework: "WSYue-ASR"
-            cann: "7.0"
-
-          - soc_version: "910B3"
-            image: "gpustack/ascendai-cann:8.0.RC3-910b-ubuntu20.04-py3.9"
-            framework: "FunASR"
-            cann: "8.0"
-
-          - soc_version: "910B3"
-            image: "gpustack/ascendai-cann:8.0.RC3-910b-ubuntu20.04-py3.9"
-            framework: "WSYue-ASR"
-            cann: "8.0"
-
-          - soc_version: "910B3"
-            image: "gpustack/devel-ascendai-cann:8.2.rc1-910b-ubuntu20.04-v2"
-            framework: "FunASR"
-            cann: "8.2"
-
-          - soc_version: "910B3"
-            image: "gpustack/devel-ascendai-cann:8.2.rc1-910b-ubuntu20.04-v2"
-            framework: "WSYue-ASR"
-            cann: "8.2"
-
-
-          # ===== Ascend 310 =====
-          - soc_version: "310P3"
-            image: "quay.io/ascend/cann:7.0.1-310p-ubuntu22.04-py3.9"
-            framework: "FunASR"
-            cann: "7.0"
-
-          - soc_version: "310P3"
-            image: "quay.io/ascend/cann:7.0.1-310p-ubuntu22.04-py3.9"
-            framework: "WSYue-ASR"
-            cann: "7.0"
-
-          - soc_version: "310P3"
-            # image: "gpustack/ascendai-cann:8.0.RC2.alpha003-310p-ubuntu20.04-py3.9"
-            image: "gpustack/devel-ascendai-cann:8.0.rc3.beta1-310p-ubuntu20.04-v2"
-            framework: "FunASR"
-            cann: "8.0"
-
-          - soc_version: "310P3"
-            # image: "gpustack/ascendai-cann:8.0.RC2.alpha003-310p-ubuntu20.04-py3.9"
-            image: "gpustack/devel-ascendai-cann:8.0.rc3.beta1-310p-ubuntu20.04-v2"
-            framework: "WSYue-ASR"
-            cann: "8.0"
-
-          - soc_version: "310P3"
-            image: "gpustack/devel-ascendai-cann:8.2.rc1-310p-ubuntu20.04-v2"
-            framework: "FunASR"
-            cann: "8.2"
-
-          - soc_version: "310P3"
-            image: "gpustack/devel-ascendai-cann:8.2.rc1-310p-ubuntu20.04-v2"
-            framework: "WSYue-ASR"
-            cann: "8.2"
+        ${{ fromJson(needs.generate_build_matrix.outputs.matrix) }}
 
     container:
-      # image: ascendai/cann:latest
-      # image: ascendai/cann:8.1.rc1-910b-ubuntu22.04-py3.10
-      # see https://hub.docker.com/r/gpustack/ascendai-cann/tags?name=8.0
-      # see https://hub.docker.com/r/gpustack/devel-ascendai-cann/tags?name=310p
-      # and
-      # https://quay.io/repository/ascend/cann?tab=tags
       image: ${{ matrix.image }}
 
     steps:
@@ -172,7 +62,7 @@ jobs:
 
       - name: Install curl
         shell: bash
-        run: apt-get update && apt-get install -y curl bzip2
+        run: apt-get update && apt-get install -y curl bzip2 git git-lfs
 
       - name: Verify environment
         shell: bash
@@ -226,6 +116,7 @@ jobs:
           echo "export to onnx"
 
           python3 ./export_onnx.py
+          rm -v *.pt
 
           ls -lh *.onnx
 
@@ -247,6 +138,8 @@ jobs:
             --input_shape="x:1,-1,560;prompt:4" \
             --soc_version="Ascend${soc_version}"
 
+          rm -v *.onnx
+
           ls -lh *.om
 
           echo "collect results"
@@ -265,6 +158,8 @@ jobs:
           tar cjfv $d.tar.bz2 $d
           ls -lh *.tar.bz2
           rm -rf $d
+
+          rm -v *.om
 
           echo "----show---"
           ls -lh *.tar.bz2
@@ -296,6 +191,7 @@ jobs:
 
           echo "export to onnx"
           python3 ./export_onnx.py
+          rm -v *.pt
 
           ls -lh *.onnx
 
@@ -317,6 +213,7 @@ jobs:
             --input_shape="x:1,-1,560;prompt:4" \
             --soc_version="Ascend${soc_version}"
 
+          rm -v *.onnx
           ls -lh *.om
 
           echo "collect results"
@@ -334,6 +231,8 @@ jobs:
           tar cjfv $d.tar.bz2 $d
           ls -lh *.tar.bz2
           rm -rf $d
+
+          rm -v *.om
 
           echo "----show---"
           ls -lh *.tar.bz2
@@ -359,3 +258,85 @@ jobs:
           file: ./*.tar.bz2
           overwrite: true
           tag: asr-models-ascend
+
+      - name: Publish to huggingface
+        if: true
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        uses: nick-fields/retry@v3
+        with:
+          max_attempts: 20
+          timeout_seconds: 200
+          shell: bash
+          command: |
+            git config --global user.email "csukuangfj@gmail.com"
+            git config --global user.name "Fangjun Kuang"
+            for m in "*.tar.bz2"; do
+              export GIT_LFS_SKIP_SMUDGE=1
+              export GIT_CLONE_PROTECTION_ACTIVE=false
+              rm -rf huggingface
+              git clone https://csukuangfj:$HF_TOKEN@huggingface.co/k2-fsa/sherpa-onnx-models huggingface
+
+              d=asr-models/ascend-npu/sense-voice
+              mkdir -p huggingface/$d
+
+              cp -v $m huggingface/$d/
+
+              pushd huggingface
+              git lfs track "*.tar.bz2"
+              ls -lh $d/$m
+
+              ls -lh $d
+
+              pushd $d
+              git lfs track "*.tar.bz2"
+              popd
+
+              git status
+              git add .
+
+              git commit -m "add $m"
+              git push https://csukuangfj:$HF_TOKEN@huggingface.co/k2-fsa/sherpa-onnx-models main
+              popd
+            done
+
+            rm -rf huggingface
+
+      - name: Publish to modelscope
+        if: true
+        env:
+          MS_TOKEN: ${{ secrets.MODEL_SCOPE_GIT_TOKEN }}
+        uses: nick-fields/retry@v3
+        with:
+          max_attempts: 20
+          timeout_seconds: 200
+          shell: bash
+          command: |
+            git config --global user.email "csukuangfj@gmail.com"
+            git config --global user.name "Fangjun Kuang"
+            for m in "*.tar.bz2"; do
+              export GIT_LFS_SKIP_SMUDGE=1
+              export GIT_CLONE_PROTECTION_ACTIVE=false
+
+              rm -rf ms
+              git clone https://oauth2:${MS_TOKEN}@www.modelscope.cn/csukuangfj/asr-models.git ms
+
+              d=ascend-npu/sense-voice
+              mkdir -p ms/$d
+
+              cp -av $m ms/$d/
+
+              pushd ms
+              git lfs track "*.tar.bz2"
+              git status
+              ls -lh $d/$m
+
+              ls -lh $d
+              git add .
+
+              git commit -m "add $m"
+              git push https://oauth2:${MS_TOKEN}@www.modelscope.cn/csukuangfj/asr-models.git
+
+              popd
+            done
+            rm -rf ms

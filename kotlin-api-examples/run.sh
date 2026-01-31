@@ -37,6 +37,26 @@ function testVersion() {
   java -Djava.library.path=../build/lib -jar $out_filename
 }
 
+function testPocketTts() {
+  if [ ! -f ./sherpa-onnx-pocket-tts-int8-2026-01-26/encoder.onnx ]; then
+    curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2
+    tar xvf sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2
+    rm sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2
+  fi
+
+  out_filename=test_pocket_tts.jar
+  kotlinc-jvm -include-runtime -d $out_filename \
+    test_pocket_tts.kt \
+    Tts.kt \
+    WaveReader.kt \
+    faked-asset-manager.kt \
+    faked-log.kt
+
+  ls -lh $out_filename
+
+  java -Djava.library.path=../build/lib -jar $out_filename
+}
+
 function testSpeakerEmbeddingExtractor() {
   if [ ! -f ./3dspeaker_speech_eres2net_large_sv_zh-cn_3dspeaker_16k.onnx ]; then
     curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_eres2net_large_sv_zh-cn_3dspeaker_16k.onnx
@@ -234,10 +254,10 @@ function testOfflineAsr() {
     rm sherpa-onnx-moonshine-tiny-en-int8.tar.bz2
   fi
 
-  if [ ! -f ./sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/tokens.txt ]; then
-    curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2
-    tar xvf sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2
-    rm sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2
+  if [ ! -f ./sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/tokens.txt ]; then
+    curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
+    tar xvf sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
+    rm sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
   fi
 
   if [ ! -f ./sherpa-onnx-whisper-tiny.en/tiny.en-encoder.int8.onnx ]; then
@@ -275,6 +295,7 @@ function testOfflineAsr() {
   kotlinc-jvm -include-runtime -d $out_filename \
     test_offline_asr.kt \
     FeatureConfig.kt \
+    QnnConfig.kt \
     HomophoneReplacerConfig.kt \
     OfflineRecognizer.kt \
     OfflineStream.kt \
@@ -304,6 +325,7 @@ function testInverseTextNormalizationOfflineAsr() {
   kotlinc-jvm -include-runtime -d $out_filename \
     test_itn_offline_asr.kt \
     FeatureConfig.kt \
+    QnnConfig.kt \
     HomophoneReplacerConfig.kt \
     OfflineRecognizer.kt \
     OfflineStream.kt \
@@ -437,10 +459,10 @@ function testOfflineSpeechDenoiser() {
 }
 
 function testOfflineSenseVoiceWithHr() {
-  if [ ! -f ./sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/tokens.txt ]; then
-    curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2
-    tar xvf sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2
-    rm sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2
+  if [ ! -f ./sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/tokens.txt ]; then
+    curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
+    tar xvf sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
+    rm sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
   fi
 
   if [ ! -d dict ]; then
@@ -457,6 +479,7 @@ function testOfflineSenseVoiceWithHr() {
   kotlinc-jvm -include-runtime -d $out_filename \
     test_offline_sense_voice_with_hr.kt \
     FeatureConfig.kt \
+    QnnConfig.kt \
     HomophoneReplacerConfig.kt \
     OfflineRecognizer.kt \
     OfflineStream.kt \
@@ -478,6 +501,7 @@ function testOfflineNeMoCanary() {
   kotlinc-jvm -include-runtime -d $out_filename \
     test_offline_nemo_canary.kt \
     FeatureConfig.kt \
+    QnnConfig.kt \
     HomophoneReplacerConfig.kt \
     OfflineRecognizer.kt \
     OfflineStream.kt \
@@ -500,6 +524,51 @@ function testOfflineOmnilingualAsrCtc() {
   kotlinc-jvm -include-runtime -d $out_filename \
     test_offline_omnilingual_asr_ctc.kt \
     FeatureConfig.kt \
+    QnnConfig.kt \
+    HomophoneReplacerConfig.kt \
+    OfflineRecognizer.kt \
+    OfflineStream.kt \
+    WaveReader.kt \
+    faked-asset-manager.kt
+
+  ls -lh $out_filename
+  java -Djava.library.path=../build/lib -jar $out_filename
+}
+
+function testOfflineMedAsrCtc() {
+  if [ ! -f ./sherpa-onnx-medasr-ctc-en-int8-2025-12-25/tokens.txt ]; then
+    curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-medasr-ctc-en-int8-2025-12-25.tar.bz2
+    tar xvf sherpa-onnx-medasr-ctc-en-int8-2025-12-25.tar.bz2
+    rm sherpa-onnx-medasr-ctc-en-int8-2025-12-25.tar.bz2
+  fi
+
+  out_filename=test_offline_medasr_ctc.jar
+  kotlinc-jvm -include-runtime -d $out_filename \
+    test_offline_medasr_ctc.kt \
+    FeatureConfig.kt \
+    QnnConfig.kt \
+    HomophoneReplacerConfig.kt \
+    OfflineRecognizer.kt \
+    OfflineStream.kt \
+    WaveReader.kt \
+    faked-asset-manager.kt
+
+  ls -lh $out_filename
+  java -Djava.library.path=../build/lib -jar $out_filename
+}
+
+function testOfflineFunAsrNano() {
+  if [ ! -f ./sherpa-onnx-funasr-nano-int8-2025-12-30/embedding.int8.onnx ]; then
+    curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-funasr-nano-int8-2025-12-30.tar.bz2
+    tar xvf sherpa-onnx-funasr-nano-int8-2025-12-30.tar.bz2
+    rm sherpa-onnx-funasr-nano-int8-2025-12-30.tar.bz2
+  fi
+
+  out_filename=test_offline_funasr_nano.jar
+  kotlinc-jvm -include-runtime -d $out_filename \
+    test_offline_funasr_nano.kt \
+    FeatureConfig.kt \
+    QnnConfig.kt \
     HomophoneReplacerConfig.kt \
     OfflineRecognizer.kt \
     OfflineStream.kt \
@@ -521,6 +590,7 @@ function testOfflineWenetCtc() {
   kotlinc-jvm -include-runtime -d $out_filename \
     test_offline_wenet_ctc.kt \
     FeatureConfig.kt \
+    QnnConfig.kt \
     HomophoneReplacerConfig.kt \
     OfflineRecognizer.kt \
     OfflineStream.kt \
@@ -532,7 +602,9 @@ function testOfflineWenetCtc() {
 }
 
 testVersion
-
+testPocketTts
+testOfflineFunAsrNano
+testOfflineMedAsrCtc
 testOfflineOmnilingualAsrCtc
 testOfflineWenetCtc
 testOfflineNeMoCanary

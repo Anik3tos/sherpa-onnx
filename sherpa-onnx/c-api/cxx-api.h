@@ -272,11 +272,28 @@ struct SHERPA_ONNX_API OfflineOmnilingualAsrCtcModelConfig {
   std::string model;
 };
 
+struct SHERPA_ONNX_API OfflineMedAsrCtcModelConfig {
+  std::string model;
+};
+
 struct SHERPA_ONNX_API OfflineMoonshineModelConfig {
   std::string preprocessor;
   std::string encoder;
   std::string uncached_decoder;
   std::string cached_decoder;
+};
+
+struct SHERPA_ONNX_API OfflineFunASRNanoModelConfig {
+  std::string encoder_adaptor;
+  std::string llm;
+  std::string embedding;
+  std::string tokenizer;
+  std::string system_prompt = "You are a helpful assistant.";
+  std::string user_prompt = "语音转写：";
+  int32_t max_new_tokens = 512;
+  float temperature = 1e-6f;
+  float top_p = 0.8f;
+  int32_t seed = 42;
 };
 
 struct SHERPA_ONNX_API OfflineModelConfig {
@@ -302,6 +319,8 @@ struct SHERPA_ONNX_API OfflineModelConfig {
   OfflineCanaryModelConfig canary;
   OfflineWenetCtcModelConfig wenet_ctc;
   OfflineOmnilingualAsrCtcModelConfig omnilingual;
+  OfflineMedAsrCtcModelConfig medasr;
+  OfflineFunASRNanoModelConfig funasr_nano;
 };
 
 struct SHERPA_ONNX_API OfflineLMConfig {
@@ -428,11 +447,11 @@ struct OfflineTtsKittenModelConfig {
 
 struct OfflineTtsZipvoiceModelConfig {
   std::string tokens;
-  std::string text_model;
-  std::string flow_matching_model;
+  std::string encoder;
+  std::string decoder;
   std::string vocoder;
   std::string data_dir;
-  std::string pinyin_dict;
+  std::string lexicon;
 
   float feat_scale = 0.1;
   float t_shift = 0.5;
