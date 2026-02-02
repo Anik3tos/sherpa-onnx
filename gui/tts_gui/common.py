@@ -31,7 +31,6 @@ import wave
 import struct
 
 VOICE_CONFIGS = {
-    # VITS Piper Models (Recommended - Most Stable)
     "vits_piper_libritts": {
         "name": "LibriTTS Multi-Speaker (904 Diverse Voices) ⭐RECOMMENDED⭐",
         "model_type": "vits",
@@ -239,7 +238,6 @@ VOICE_CONFIGS = {
         },
         "download_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-libritts-high.tar.bz2",
     },
-    # British English Models
     "vits_piper_alba": {
         "name": "Alba - British Female Voice",
         "model_type": "vits",
@@ -338,7 +336,6 @@ VOICE_CONFIGS = {
         },
         "download_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-vctk.tar.bz2",
     },
-    # Matcha-TTS Models (High Quality with Natural Prosody)
     "matcha_ljspeech": {
         "name": "Matcha-TTS LJSpeech (Premium Female Voice)",
         "model_type": "matcha",
@@ -361,7 +358,6 @@ VOICE_CONFIGS = {
         },
         "download_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/matcha-icefall-en_US-ljspeech.tar.bz2",
     },
-    # Special Character Voices
     "vits_glados": {
         "name": "GLaDOS - AI Character Voice",
         "model_type": "vits",
@@ -382,7 +378,6 @@ VOICE_CONFIGS = {
         },
         "download_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-glados.tar.bz2",
     },
-    # Chinese Models
     "vits_piper_zh_huayan": {
         "name": "Huayan - Chinese Female Voice (中文女声)",
         "model_type": "vits",
@@ -403,7 +398,6 @@ VOICE_CONFIGS = {
         },
         "download_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-zh_CN-huayan-medium.tar.bz2",
     },
-    # German Models
     "vits_piper_de_thorsten": {
         "name": "Thorsten - German Male Voice (Deutsch)",
         "model_type": "vits",
@@ -424,7 +418,6 @@ VOICE_CONFIGS = {
         },
         "download_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-de_DE-thorsten-high.tar.bz2",
     },
-    # French Models
     "vits_piper_fr_siwis": {
         "name": "Siwis - French Female Voice (Français)",
         "model_type": "vits",
@@ -445,7 +438,6 @@ VOICE_CONFIGS = {
         },
         "download_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-fr_FR-siwis-medium.tar.bz2",
     },
-    # Spanish Models
     "vits_piper_es_carlfm": {
         "name": "Carlfm - Spanish Male Voice (Español)",
         "model_type": "vits",
@@ -466,7 +458,6 @@ VOICE_CONFIGS = {
         },
         "download_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-es_ES-carlfm-x_low.tar.bz2",
     },
-    # Russian Models
     "vits_piper_ru_irinia": {
         "name": "Irina - Russian Female Voice (Русский)",
         "model_type": "vits",
@@ -487,8 +478,4 @@ VOICE_CONFIGS = {
         },
         "download_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ru_RU-irina-medium.tar.bz2",
     },
-    # NOTE: Japanese models are not currently available in sherpa-onnx releases
-    # NOTE: Kokoro models are disabled due to stability issues with multi-lingual requirements
-    # They require complex lexicon and dictionary configurations that can cause crashes
-    # Use the VITS Piper models above for stable, high-quality TTS
 }
