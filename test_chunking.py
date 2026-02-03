@@ -148,7 +148,7 @@ def test_integration():
         'normalize_whitespace': True,
         'normalize_punctuation': True,
         'remove_urls': False,
-        'remove_emails': False
+        'remove_word_dashes': True
     }
     
     processed_text = processor.preprocess_text(long_text, options)

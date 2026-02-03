@@ -1,9 +1,27 @@
 #!/usr/bin/env python3
+"""
+Keyboard shortcuts mixin for the TTS GUI using PySide6 (Qt).
+"""
 
-from tts_gui.common import tk, ttk, scrolledtext, os
+from tts_gui.common import (
+    QDialog,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QFrame,
+    QScrollArea,
+    QWidget,
+    Qt,
+    QShortcut,
+    QKeySequence,
+)
+import os
 
 
 class TTSGuiShortcutsMixin:
+    """Mixin class providing keyboard shortcuts functionality."""
+
     def setup_keyboard_shortcuts(self):
         """
         Setup keyboard shortcuts for power user productivity.
@@ -12,8 +30,8 @@ class TTSGuiShortcutsMixin:
             Space         - Play/Pause audio
             Ctrl+Enter    - Generate speech
             Ctrl+G        - Generate speech (alternative)
-            1, 2, 3       - Speed presets (0.75x, 1.0x, 1.5x)
-            4, 5          - Speed presets (2.0x, 0.5x)
+            1, 2, 3       - Speed presets (0.75x, 1.0x, 1.5x) when not in text
+            4, 5          - Speed presets (2.0x, 0.5x) when not in text
             Alt+Up        - Previous voice model
             Alt+Down      - Next voice model
             Shift+Alt+Up  - Previous speaker
@@ -23,58 +41,94 @@ class TTSGuiShortcutsMixin:
             Escape        - Cancel generation / Stop playback
             F1 / Ctrl+/   - Show keyboard shortcuts help
         """
-        # NOTE: Some shortcuts only work when focus is not in text widget
-        # to avoid conflicts with text editing
+        self._shortcuts = []
 
-        # Global shortcuts (work anywhere in the window)
-        self.root.bind("<F1>", self.show_keyboard_shortcuts)
-        self.root.bind("<Control-slash>", self.show_keyboard_shortcuts)
-        self.root.bind("<Control-question>", self.show_keyboard_shortcuts)
+        # F1 - Show shortcuts
+        shortcut_f1 = QShortcut(QKeySequence("F1"), self.main_window)
+        shortcut_f1.activated.connect(self.show_keyboard_shortcuts)
+        self._shortcuts.append(shortcut_f1)
 
-        # Play/Pause with Space (only when not in text widget)
-        self.root.bind("<space>", self._on_space_key)
+        # Ctrl+/ - Show shortcuts (alternative)
+        shortcut_help = QShortcut(QKeySequence("Ctrl+/"), self.main_window)
+        shortcut_help.activated.connect(self.show_keyboard_shortcuts)
+        self._shortcuts.append(shortcut_help)
 
-        # Generate with Ctrl+Enter or Ctrl+G
-        self.root.bind("<Control-Return>", self._on_ctrl_enter)
-        self.root.bind("<Control-g>", self._on_ctrl_enter)
-        self.root.bind("<Control-G>", self._on_ctrl_enter)
+        # Space - Play/Pause (when not in text widget)
+        shortcut_space = QShortcut(QKeySequence("Space"), self.main_window)
+        shortcut_space.activated.connect(self._on_space_key)
+        self._shortcuts.append(shortcut_space)
 
-        # Speed presets with number keys (only when not in text widget)
-        self.root.bind("<Key-1>", lambda e: self._apply_speed_preset(e, 0.75))
-        self.root.bind("<Key-2>", lambda e: self._apply_speed_preset(e, 1.0))
-        self.root.bind("<Key-3>", lambda e: self._apply_speed_preset(e, 1.5))
-        self.root.bind("<Key-4>", lambda e: self._apply_speed_preset(e, 2.0))
-        self.root.bind("<Key-5>", lambda e: self._apply_speed_preset(e, 0.5))
+        # Ctrl+Enter - Generate speech
+        shortcut_generate = QShortcut(QKeySequence("Ctrl+Return"), self.main_window)
+        shortcut_generate.activated.connect(self._on_ctrl_enter)
+        self._shortcuts.append(shortcut_generate)
 
-        # Voice switching with Alt+Arrow keys
-        self.root.bind("<Alt-Up>", self._previous_voice_model)
-        self.root.bind("<Alt-Down>", self._next_voice_model)
+        # Ctrl+G - Generate speech (alternative)
+        shortcut_generate_g = QShortcut(QKeySequence("Ctrl+G"), self.main_window)
+        shortcut_generate_g.activated.connect(self._on_ctrl_enter)
+        self._shortcuts.append(shortcut_generate_g)
 
-        # Speaker switching with Shift+Alt+Arrow keys
-        self.root.bind("<Shift-Alt-Up>", self._previous_speaker)
-        self.root.bind("<Shift-Alt-Down>", self._next_speaker)
+        # Number keys for speed presets
+        shortcut_1 = QShortcut(QKeySequence("1"), self.main_window)
+        shortcut_1.activated.connect(lambda: self._apply_speed_preset(0.75))
+        self._shortcuts.append(shortcut_1)
 
-        # Cancel/Stop with Escape
-        self.root.bind("<Escape>", self._on_escape)
+        shortcut_2 = QShortcut(QKeySequence("2"), self.main_window)
+        shortcut_2.activated.connect(lambda: self._apply_speed_preset(1.0))
+        self._shortcuts.append(shortcut_2)
 
-        # Clear text with Ctrl+Shift+C (different from Ctrl+C copy)
-        self.root.bind("<Control-Shift-c>", self._on_clear_text_shortcut)
-        self.root.bind("<Control-Shift-C>", self._on_clear_text_shortcut)
+        shortcut_3 = QShortcut(QKeySequence("3"), self.main_window)
+        shortcut_3.activated.connect(lambda: self._apply_speed_preset(1.5))
+        self._shortcuts.append(shortcut_3)
 
-        # Text widget specific bindings (Ctrl+A select all already built-in)
-        # Add Ctrl+Enter in text widget to still generate
-        self.text_widget.bind("<Control-Return>", self._on_ctrl_enter)
+        shortcut_4 = QShortcut(QKeySequence("4"), self.main_window)
+        shortcut_4.activated.connect(lambda: self._apply_speed_preset(2.0))
+        self._shortcuts.append(shortcut_4)
+
+        shortcut_5 = QShortcut(QKeySequence("5"), self.main_window)
+        shortcut_5.activated.connect(lambda: self._apply_speed_preset(0.5))
+        self._shortcuts.append(shortcut_5)
+
+        # Alt+Arrow keys for voice switching
+        shortcut_prev_voice = QShortcut(QKeySequence("Alt+Up"), self.main_window)
+        shortcut_prev_voice.activated.connect(self._previous_voice_model)
+        self._shortcuts.append(shortcut_prev_voice)
+
+        shortcut_next_voice = QShortcut(QKeySequence("Alt+Down"), self.main_window)
+        shortcut_next_voice.activated.connect(self._next_voice_model)
+        self._shortcuts.append(shortcut_next_voice)
+
+        # Shift+Alt+Arrow keys for speaker switching
+        shortcut_prev_speaker = QShortcut(
+            QKeySequence("Shift+Alt+Up"), self.main_window
+        )
+        shortcut_prev_speaker.activated.connect(self._previous_speaker)
+        self._shortcuts.append(shortcut_prev_speaker)
+
+        shortcut_next_speaker = QShortcut(
+            QKeySequence("Shift+Alt+Down"), self.main_window
+        )
+        shortcut_next_speaker.activated.connect(self._next_speaker)
+        self._shortcuts.append(shortcut_next_speaker)
+
+        # Escape - Cancel/Stop
+        shortcut_escape = QShortcut(QKeySequence("Escape"), self.main_window)
+        shortcut_escape.activated.connect(self._on_escape)
+        self._shortcuts.append(shortcut_escape)
+
+        # Ctrl+Shift+C - Clear text
+        shortcut_clear = QShortcut(QKeySequence("Ctrl+Shift+C"), self.main_window)
+        shortcut_clear.activated.connect(self.clear_text)
+        self._shortcuts.append(shortcut_clear)
 
         self.log_status("⌨️ Keyboard shortcuts enabled (press F1 for help)")
 
-    def _on_space_key(self, event):
-        """Handle Space key for play/pause toggle"""
-        # Check if focus is in a text entry widget
-        focused = self.root.focus_get()
-        if isinstance(
-            focused, (tk.Text, ttk.Entry, tk.Entry, scrolledtext.ScrolledText)
-        ):
-            return  # Let the text widget handle it normally
+    def _on_space_key(self):
+        """Handle Space key for play/pause toggle."""
+        # Check if focus is in the text widget
+        focused = self.main_window.focusWidget()
+        if focused == self.text_widget:
+            return  # Let the text widget handle it
 
         # Toggle play/pause
         if self.is_playing:
@@ -82,143 +136,118 @@ class TTSGuiShortcutsMixin:
         elif self.current_audio_file and os.path.exists(self.current_audio_file):
             self.play_audio()
 
-        return "break"  # Prevent default behavior
-
-    def _on_ctrl_enter(self, event):
-        """Handle Ctrl+Enter for speech generation"""
-        # Only generate if button is enabled (not already generating)
-        if str(self.generate_btn["state"]) != "disabled":
+    def _on_ctrl_enter(self):
+        """Handle Ctrl+Enter for speech generation."""
+        if self.generate_btn.isEnabled():
             self.generate_speech()
-        return "break"
 
-    def _apply_speed_preset(self, event, speed):
-        """Apply a speed preset if not in text widget"""
-        # Check if focus is in a text entry widget
-        focused = self.root.focus_get()
-        if isinstance(
-            focused, (tk.Text, ttk.Entry, tk.Entry, scrolledtext.ScrolledText)
-        ):
-            return  # Let the text widget handle it normally
+    def _apply_speed_preset(self, speed):
+        """Apply a speed preset if not in text widget."""
+        # Check if focus is in the text widget
+        focused = self.main_window.focusWidget()
+        if focused == self.text_widget:
+            return  # Let the text widget handle it
 
         # Apply the speed preset
-        self.speed_var.set(speed)
-        self.update_speed_label(speed)
+        self.speed_slider.setValue(int(speed * 100))
         self.log_status(f"⚡ Speed preset: {speed}x")
-        return "break"
 
-    def _previous_voice_model(self, event):
-        """Switch to previous voice model"""
-        values = self.voice_model_combo["values"]
-        if not values:
-            return "break"
+    def _previous_voice_model(self):
+        """Switch to previous voice model."""
+        count = self.voice_model_combo.count()
+        if count == 0:
+            return
 
-        current_idx = self.voice_model_combo.current()
-        new_idx = (current_idx - 1) % len(values)
-        self.voice_model_combo.current(new_idx)
-        self.on_voice_model_changed(None)
+        current_idx = self.voice_model_combo.currentIndex()
+        new_idx = (current_idx - 1) % count
+        self.voice_model_combo.setCurrentIndex(new_idx)
 
-        # Get the model name for logging
-        model_name = values[new_idx] if new_idx < len(values) else "Unknown"
+        model_name = self.voice_model_combo.currentText()
         self.log_status(f"🎤 Voice model: {model_name[:50]}...")
-        return "break"
 
-    def _next_voice_model(self, event):
-        """Switch to next voice model"""
-        values = self.voice_model_combo["values"]
-        if not values:
-            return "break"
+    def _next_voice_model(self):
+        """Switch to next voice model."""
+        count = self.voice_model_combo.count()
+        if count == 0:
+            return
 
-        current_idx = self.voice_model_combo.current()
-        new_idx = (current_idx + 1) % len(values)
-        self.voice_model_combo.current(new_idx)
-        self.on_voice_model_changed(None)
+        current_idx = self.voice_model_combo.currentIndex()
+        new_idx = (current_idx + 1) % count
+        self.voice_model_combo.setCurrentIndex(new_idx)
 
-        # Get the model name for logging
-        model_name = values[new_idx] if new_idx < len(values) else "Unknown"
+        model_name = self.voice_model_combo.currentText()
         self.log_status(f"🎤 Voice model: {model_name[:50]}...")
-        return "break"
 
-    def _previous_speaker(self, event):
-        """Switch to previous speaker"""
-        values = self.speaker_combo["values"]
-        if not values:
-            return "break"
+    def _previous_speaker(self):
+        """Switch to previous speaker."""
+        count = self.speaker_combo.count()
+        if count == 0:
+            return
 
-        current_idx = self.speaker_combo.current()
-        new_idx = (current_idx - 1) % len(values)
-        self.speaker_combo.current(new_idx)
-        self.on_speaker_changed(None)
+        current_idx = self.speaker_combo.currentIndex()
+        new_idx = (current_idx - 1) % count
+        self.speaker_combo.setCurrentIndex(new_idx)
 
-        # Get the speaker name for logging
-        speaker_name = values[new_idx] if new_idx < len(values) else "Unknown"
+        speaker_name = self.speaker_combo.currentText()
         self.log_status(f"👤 Speaker: {speaker_name[:40]}...")
-        return "break"
 
-    def _next_speaker(self, event):
-        """Switch to next speaker"""
-        values = self.speaker_combo["values"]
-        if not values:
-            return "break"
+    def _next_speaker(self):
+        """Switch to next speaker."""
+        count = self.speaker_combo.count()
+        if count == 0:
+            return
 
-        current_idx = self.speaker_combo.current()
-        new_idx = (current_idx + 1) % len(values)
-        self.speaker_combo.current(new_idx)
-        self.on_speaker_changed(None)
+        current_idx = self.speaker_combo.currentIndex()
+        new_idx = (current_idx + 1) % count
+        self.speaker_combo.setCurrentIndex(new_idx)
 
-        # Get the speaker name for logging
-        speaker_name = values[new_idx] if new_idx < len(values) else "Unknown"
+        speaker_name = self.speaker_combo.currentText()
         self.log_status(f"👤 Speaker: {speaker_name[:40]}...")
-        return "break"
 
-    def _on_escape(self, event):
-        """Handle Escape key - cancel generation or stop playback"""
+    def _on_escape(self):
+        """Handle Escape key - cancel generation or stop playback."""
         if self.generation_thread and self.generation_thread.is_alive():
-            # Cancel ongoing generation
             self.cancel_generation()
         elif self.is_playing:
-            # Stop audio playback
             self.stop_audio()
-        return "break"
 
-    def _on_clear_text_shortcut(self, event):
-        """Handle Ctrl+Shift+C for clearing text"""
-        self.clear_text()
-        return "break"
+    def show_keyboard_shortcuts(self):
+        """Show keyboard shortcuts help dialog."""
+        dialog = QDialog(self.main_window)
+        dialog.setWindowTitle("Keyboard Shortcuts")
+        dialog.setFixedSize(550, 600)
+        dialog.setStyleSheet(f"background-color: {self.colors['bg_primary']};")
 
-    def show_keyboard_shortcuts(self, event=None):
-        """Show keyboard shortcuts help dialog"""
-        shortcuts_window = tk.Toplevel(self.root)
-        shortcuts_window.title("Keyboard Shortcuts")
-        shortcuts_window.geometry("550x600")
-        shortcuts_window.configure(bg=self.colors["bg_primary"])
-
-        # Make window modal
-        shortcuts_window.transient(self.root)
-        shortcuts_window.grab_set()
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(10)
 
         # Title
-        title_label = tk.Label(
-            shortcuts_window,
-            text="⌨️ Keyboard Shortcuts",
-            font=("Segoe UI", 16, "bold"),
-            bg=self.colors["bg_primary"],
-            fg=self.colors["fg_primary"],
+        title = QLabel("⌨️ Keyboard Shortcuts")
+        title.setStyleSheet(
+            f"""
+            font-size: 16px;
+            font-weight: bold;
+            color: {self.colors['fg_primary']};
+        """
         )
-        title_label.pack(pady=(20, 5))
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
 
         # Subtitle
-        subtitle_label = tk.Label(
-            shortcuts_window,
-            text="Power user productivity features",
-            font=("Segoe UI", 10),
-            bg=self.colors["bg_primary"],
-            fg=self.colors["fg_muted"],
-        )
-        subtitle_label.pack(pady=(0, 15))
+        subtitle = QLabel("Power user productivity features")
+        subtitle.setStyleSheet(f"color: {self.colors['fg_muted']}; font-size: 10px;")
+        subtitle.setAlignment(Qt.AlignCenter)
+        layout.addWidget(subtitle)
 
-        # Shortcuts content frame with scrollbar
-        content_frame = ttk.Frame(shortcuts_window, style="Dark.TFrame")
-        content_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        # Scroll area for shortcuts
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("border: none;")
+
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+        scroll_layout.setSpacing(5)
 
         # Define shortcut categories
         shortcuts_data = [
@@ -273,75 +302,75 @@ class TTSGuiShortcutsMixin:
             ),
         ]
 
-        # Create shortcuts display
         for category, shortcuts in shortcuts_data:
             # Category header
-            cat_label = tk.Label(
-                content_frame,
-                text=category,
-                font=("Segoe UI", 11, "bold"),
-                bg=self.colors["bg_secondary"],
-                fg=self.colors["accent_cyan"],
-                anchor="w",
+            cat_label = QLabel(category)
+            cat_label.setStyleSheet(
+                f"""
+                font-size: 11px;
+                font-weight: bold;
+                color: {self.colors['accent_cyan']};
+                background-color: {self.colors['bg_secondary']};
+                padding: 5px;
+                border-radius: 4px;
+            """
             )
-            cat_label.pack(fill=tk.X, pady=(10, 5))
+            scroll_layout.addWidget(cat_label)
 
             # Shortcuts in this category
             for key, description in shortcuts:
-                shortcut_frame = ttk.Frame(content_frame, style="Dark.TFrame")
-                shortcut_frame.pack(fill=tk.X, pady=2)
+                row = QHBoxLayout()
+                row.setSpacing(10)
 
-                # Key label (fixed width, highlighted)
-                key_label = tk.Label(
-                    shortcut_frame,
-                    text=key,
-                    font=("Consolas", 10, "bold"),
-                    bg=self.colors["bg_tertiary"],
-                    fg=self.colors["accent_pink"],
-                    width=18,
-                    anchor="w",
-                    padx=8,
-                    pady=2,
+                key_label = QLabel(key)
+                key_label.setFixedWidth(120)
+                key_label.setStyleSheet(
+                    f"""
+                    font-family: Consolas;
+                    font-size: 10px;
+                    font-weight: bold;
+                    color: {self.colors['accent_pink']};
+                    background-color: {self.colors['bg_tertiary']};
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                """
                 )
-                key_label.pack(side=tk.LEFT, padx=(10, 10))
 
-                # Description label
-                desc_label = tk.Label(
-                    shortcut_frame,
-                    text=description,
-                    font=("Segoe UI", 10),
-                    bg=self.colors["bg_secondary"],
-                    fg=self.colors["fg_primary"],
-                    anchor="w",
+                desc_label = QLabel(description)
+                desc_label.setStyleSheet(
+                    f"color: {self.colors['fg_primary']}; font-size: 10px;"
                 )
-                desc_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        # Note about text widget
-        note_frame = ttk.Frame(shortcuts_window, style="Card.TFrame", padding=10)
-        note_frame.pack(fill=tk.X, padx=20, pady=10)
+                row.addWidget(key_label)
+                row.addWidget(desc_label, 1)
+                scroll_layout.addLayout(row)
 
-        note_label = tk.Label(
-            note_frame,
-            text="💡 Note: Number keys (1-5) and Space only work when focus is outside the text editor.\n"
-            "     Use Ctrl+Enter to generate while typing in the text editor.",
-            font=("Segoe UI", 9),
-            bg=self.colors["bg_tertiary"],
-            fg=self.colors["fg_muted"],
-            justify=tk.LEFT,
+            scroll_layout.addSpacing(5)
+
+        scroll.setWidget(scroll_widget)
+        layout.addWidget(scroll, 1)
+
+        # Note
+        note_frame = QFrame()
+        note_frame.setObjectName("cardFrame")
+        note_frame.setStyleSheet(
+            f"background-color: {self.colors['bg_tertiary']}; border-radius: 4px;"
         )
-        note_label.pack()
+        note_layout = QVBoxLayout(note_frame)
+        note_layout.setContentsMargins(10, 10, 10, 10)
+
+        note_label = QLabel(
+            "💡 Note: Number keys (1-5) and Space only work when focus is outside the text editor.\n"
+            "     Use Ctrl+Enter to generate while typing in the text editor."
+        )
+        note_label.setStyleSheet(f"color: {self.colors['fg_muted']}; font-size: 9px;")
+        note_label.setWordWrap(True)
+        note_layout.addWidget(note_label)
+        layout.addWidget(note_frame)
 
         # Close button
-        close_btn = ttk.Button(
-            shortcuts_window,
-            text="Close",
-            command=shortcuts_window.destroy,
-            style="Dark.TButton",
-        )
-        close_btn.pack(pady=15)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
 
-        # Allow Escape to close the window
-        shortcuts_window.bind("<Escape>", lambda e: shortcuts_window.destroy())
-        shortcuts_window.bind("<F1>", lambda e: shortcuts_window.destroy())
-
-        return "break"
+        dialog.exec()

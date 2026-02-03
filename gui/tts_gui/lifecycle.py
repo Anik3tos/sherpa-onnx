@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
+"""
+Lifecycle management mixin for the TTS GUI using PySide6 (Qt).
+"""
 
 import os
 import pygame
 
 
 class TTSGuiLifecycleMixin:
+    """Mixin class providing lifecycle management functionality."""
+
     def cleanup(self):
-        """Cleanup resources on exit"""
+        """Cleanup resources on exit."""
+        if getattr(self, "_cleanup_done", False):
+            return
+        self._cleanup_done = True
         try:
             # Save audio cache
             self.audio_cache.save_cache()

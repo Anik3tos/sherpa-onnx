@@ -1,7 +1,53 @@
 #!/usr/bin/env python3
+"""
+Common imports and configurations for the TTS GUI.
+Refactored to use PySide6 (Qt) instead of Tkinter.
+"""
 
-import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox, filedialog
+# PySide6 imports
+from PySide6.QtWidgets import (
+    QMainWindow,
+    QWidget,
+    QFrame,
+    QVBoxLayout,
+    QHBoxLayout,
+    QGridLayout,
+    QLabel,
+    QPushButton,
+    QComboBox,
+    QSlider,
+    QCheckBox,
+    QRadioButton,
+    QGroupBox,
+    QTextEdit,
+    QProgressBar,
+    QSpinBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QMessageBox,
+    QDialog,
+    QListWidget,
+    QScrollArea,
+    QSizePolicy,
+    QButtonGroup,
+    QApplication,
+    QLineEdit,
+    QDialogButtonBox,
+    QSplitter,
+    QTabWidget,
+    QPlainTextEdit,
+)
+from PySide6.QtCore import Qt, QTimer, Signal, Slot, QThread, QSize
+from PySide6.QtGui import (
+    QFont,
+    QColor,
+    QPalette,
+    QTextCharFormat,
+    QTextCursor,
+    QShortcut,
+    QKeySequence,
+)
+
 import threading
 import os
 import time
@@ -284,7 +330,6 @@ VOICE_CONFIGS = {
         },
         "download_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_GB-jenny_dioco-medium.tar.bz2",
     },
-    # VCTK Multi-Speaker Model
     "vits_vctk": {
         "name": "VCTK Multi-Speaker (109 Diverse British Voices)",
         "model_type": "vits",

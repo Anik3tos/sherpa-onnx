@@ -1,668 +1,543 @@
 #!/usr/bin/env python3
+"""
+UI setup mixin for the TTS GUI using PySide6 (Qt).
+"""
 
-from tts_gui.common import tk, ttk, scrolledtext, messagebox
+from tts_gui.common import (
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QGridLayout,
+    QLabel,
+    QPushButton,
+    QComboBox,
+    QSlider,
+    QCheckBox,
+    QGroupBox,
+    QTextEdit,
+    QProgressBar,
+    QFrame,
+    QSizePolicy,
+    Qt,
+    QFont,
+    QMessageBox,
+    QColor,
+    QTextCursor,
+    QTextCharFormat,
+    QThread,
+    QTimer,
+)
 import time
 
 
 class TTSGuiUiMixin:
-    def setup_ui(self):
-        # Main frame with dark theme
-        main_frame = ttk.Frame(self.root, style="Dark.TFrame", padding="15")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        main_frame.configure(style="Dark.TFrame")
+    """Mixin class providing UI setup functionality."""
 
-        # Enhanced Voice Selection Frame
-        voice_frame = ttk.LabelFrame(
-            main_frame,
-            text="🎤 Enhanced Voice Selection",
-            style="Dark.TLabelframe",
-            padding="15",
-        )
-        voice_frame.grid(
-            row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 15)
-        )
+    def setup_ui(self):
+        """Setup the main user interface."""
+        # Create central widget and main layout
+        central_widget = QWidget()
+        self.main_window.setCentralWidget(central_widget)
+
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(10)
+
+        # === Voice Selection Frame ===
+        voice_group = QGroupBox("🎤 Enhanced Voice Selection")
+        voice_layout = QVBoxLayout(voice_group)
+        voice_layout.setSpacing(10)
 
         # Voice Model Selection
-        model_selection_frame = ttk.Frame(voice_frame, style="Dark.TFrame")
-        model_selection_frame.grid(
-            row=0, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10)
+        model_row = QHBoxLayout()
+        model_label = QLabel("🤖 Voice Model:")
+        self.voice_model_combo = QComboBox()
+        self.voice_model_combo.setMinimumWidth(400)
+        self.voice_model_combo.currentIndexChanged.connect(self.on_voice_model_changed)
+        model_row.addWidget(model_label)
+        model_row.addWidget(self.voice_model_combo, 1)
+        model_row.addStretch()
+        voice_layout.addLayout(model_row)
+
+        # Speaker Selection
+        speaker_row = QHBoxLayout()
+        speaker_label = QLabel("👤 Voice/Speaker:")
+        self.speaker_combo = QComboBox()
+        self.speaker_combo.setMinimumWidth(400)
+        self.speaker_combo.currentIndexChanged.connect(self.on_speaker_changed)
+        self.preview_btn = QPushButton("🎵 Preview Voice")
+        self.preview_btn.clicked.connect(self.preview_voice)
+        speaker_row.addWidget(speaker_label)
+        speaker_row.addWidget(self.speaker_combo, 1)
+        speaker_row.addWidget(self.preview_btn)
+        voice_layout.addLayout(speaker_row)
+
+        # Voice Info
+        info_frame = QFrame()
+        info_frame.setObjectName("cardFrame")
+        info_layout = QHBoxLayout(info_frame)
+        info_layout.setContentsMargins(8, 8, 8, 8)
+        info_icon = QLabel("ℹ️ Voice Info:")
+        self.voice_info_label = QLabel("Select a voice model to see details")
+        self.voice_info_label.setObjectName("timeLabel")
+        self.voice_info_label.setWordWrap(True)
+        info_layout.addWidget(info_icon)
+        info_layout.addWidget(self.voice_info_label, 1)
+        voice_layout.addWidget(info_frame)
+
+        # Speed Control
+        speed_row = QHBoxLayout()
+        speed_label = QLabel("⚡ Generation Speed:")
+        self.speed_slider = QSlider(Qt.Horizontal)
+        self.speed_slider.setMinimum(50)
+        self.speed_slider.setMaximum(300)
+        self.speed_slider.setValue(100)
+        self.speed_slider.setTickInterval(25)
+        self.speed_slider.valueChanged.connect(self.update_speed_label)
+        self.speed_value_label = QLabel("1.0x")
+        speed_row.addWidget(speed_label)
+        speed_row.addWidget(self.speed_slider, 1)
+        speed_row.addWidget(self.speed_value_label)
+        voice_layout.addLayout(speed_row)
+
+        main_layout.addWidget(voice_group)
+
+        # === Text Input Frame ===
+        text_group = QGroupBox("📝 Enhanced Text Input")
+        text_layout = QVBoxLayout(text_group)
+        text_layout.setSpacing(10)
+
+        # Text Controls
+        text_controls = QHBoxLayout()
+        self.import_btn = QPushButton("📁 Import Text")
+        self.import_btn.setObjectName("utilityButton")
+        self.import_btn.clicked.connect(self.import_text)
+        self.export_text_btn = QPushButton("💾 Export Text")
+        self.export_text_btn.setObjectName("utilityButton")
+        self.export_text_btn.clicked.connect(self.export_text)
+        self.clear_btn = QPushButton("🧹 Clear")
+        self.clear_btn.setObjectName("warningButton")
+        self.clear_btn.clicked.connect(self.clear_text)
+        text_controls.addWidget(self.import_btn)
+        text_controls.addWidget(self.export_text_btn)
+        text_controls.addWidget(self.clear_btn)
+        text_controls.addStretch()
+        text_layout.addLayout(text_controls)
+
+        # Text Processing Options
+        preprocess_group = QGroupBox("🔧 Text Processing Options")
+        preprocess_layout = QGridLayout(preprocess_group)
+        preprocess_layout.setSpacing(10)
+
+        # Create checkboxes for text options
+        row = 0
+        col = 0
+        options_list = [
+            ("normalize_whitespace", "Normalize whitespace"),
+            ("normalize_punctuation", "Normalize punctuation"),
+            ("remove_urls", "Remove URLs"),
+            ("remove_duplicates", "Remove duplicate lines"),
+            (
+                "remove_word_dashes",
+                "Remove dashes between words (high-quality → high quality)",
+            ),
+            ("numbers_to_words", "Numbers to words (123→one hundred...)"),
+            ("expand_abbreviations", "Expand abbreviations (Dr.→Doctor)"),
+            ("handle_acronyms", "Pronounce acronyms (NASA→N A S A)"),
+            ("add_pauses", "Add natural pauses"),
+        ]
+
+        for key, label in options_list:
+            cb = QCheckBox(label)
+            cb.setChecked(self.text_options[key])
+            cb.stateChanged.connect(
+                lambda state, k=key: self._update_text_option(k, state)
+            )
+            preprocess_layout.addWidget(cb, row, col)
+            col += 1
+            if col >= 3:
+                col = 0
+                row += 1
+
+        text_layout.addWidget(preprocess_group)
+
+        # SSML Support Frame
+        ssml_group = QGroupBox("🎭 SSML Support (Professional Speech Control)")
+        ssml_layout = QGridLayout(ssml_group)
+        ssml_layout.setSpacing(10)
+
+        self.ssml_enabled_cb = QCheckBox("Enable SSML parsing")
+        self.ssml_enabled_cb.setChecked(False)
+        self.ssml_enabled_cb.stateChanged.connect(self.on_ssml_toggle)
+
+        self.ssml_auto_detect_cb = QCheckBox("Auto-detect SSML markup")
+        self.ssml_auto_detect_cb.setChecked(True)
+
+        self.ssml_templates_btn = QPushButton("📋 SSML Templates")
+        self.ssml_templates_btn.clicked.connect(self.show_ssml_templates)
+
+        self.ssml_reference_btn = QPushButton("❓ SSML Reference")
+        self.ssml_reference_btn.clicked.connect(self.show_ssml_reference)
+
+        self.ssml_validate_btn = QPushButton("✓ Validate SSML")
+        self.ssml_validate_btn.clicked.connect(self.validate_ssml_input)
+
+        ssml_layout.addWidget(self.ssml_enabled_cb, 0, 0)
+        ssml_layout.addWidget(self.ssml_auto_detect_cb, 0, 1)
+        ssml_layout.addWidget(self.ssml_templates_btn, 0, 2)
+        ssml_layout.addWidget(self.ssml_reference_btn, 0, 3)
+        ssml_layout.addWidget(self.ssml_validate_btn, 0, 4)
+
+        self.ssml_info_label = QLabel(
+            "SSML enables: <emphasis>, <break>, <prosody>, <say-as>, and more"
         )
+        self.ssml_info_label.setObjectName("timeLabel")
+        ssml_layout.addWidget(self.ssml_info_label, 1, 0, 1, 5)
 
-        ttk.Label(
-            model_selection_frame, text="🤖 Voice Model:", style="Dark.TLabel"
-        ).grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
+        text_layout.addWidget(ssml_group)
 
-        self.voice_model_var = tk.StringVar()
-        self.voice_model_combo = ttk.Combobox(
-            model_selection_frame,
-            textvariable=self.voice_model_var,
-            state="readonly",
-            width=50,
-            style="Dark.TSpinbox",
+        # Chunking Info Frame
+        chunking_frame = QFrame()
+        chunking_frame.setObjectName("cardFrame")
+        chunking_layout = QHBoxLayout(chunking_frame)
+        chunking_layout.setContentsMargins(8, 8, 8, 8)
+        chunking_icon = QLabel("📄 Long Text Handling:")
+        self.chunking_info_label = QLabel(
+            "Texts over 8,000 chars will be automatically split and stitched"
         )
-        self.voice_model_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 10))
-        self.voice_model_combo.bind("<<ComboboxSelected>>", self.on_voice_model_changed)
+        self.chunking_info_label.setObjectName("timeLabel")
+        chunking_layout.addWidget(chunking_icon)
+        chunking_layout.addWidget(self.chunking_info_label, 1)
+        text_layout.addWidget(chunking_frame)
 
-        # Voice/Speaker Selection
-        speaker_selection_frame = ttk.Frame(voice_frame, style="Dark.TFrame")
-        speaker_selection_frame.grid(
-            row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0)
-        )
+        # Text Widget
+        self.text_widget = QTextEdit()
+        self.text_widget.setMinimumHeight(150)
+        self.text_widget.setPlaceholderText("Enter text to synthesize...")
+        self.text_widget.textChanged.connect(self.on_text_change)
 
-        ttk.Label(
-            speaker_selection_frame, text="👤 Voice/Speaker:", style="Dark.TLabel"
-        ).grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
-
-        self.speaker_var = tk.StringVar()
-        self.speaker_combo = ttk.Combobox(
-            speaker_selection_frame,
-            textvariable=self.speaker_var,
-            state="readonly",
-            width=50,
-            style="Dark.TSpinbox",
-        )
-        self.speaker_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 10))
-        self.speaker_combo.bind("<<ComboboxSelected>>", self.on_speaker_changed)
-
-        # Voice Preview Button
-        self.preview_btn = ttk.Button(
-            speaker_selection_frame,
-            text="🎵 Preview Voice",
-            command=self.preview_voice,
-            style="Dark.TButton",
-        )
-        self.preview_btn.grid(row=0, column=2, padx=(10, 0))
-
-        # Voice Information Display
-        info_frame = ttk.Frame(voice_frame, style="Card.TFrame", padding="8")
-        info_frame.grid(
-            row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0)
-        )
-
-        ttk.Label(info_frame, text="ℹ️ Voice Info:", style="Dark.TLabel").grid(
-            row=0, column=0, sticky=tk.W
-        )
-        self.voice_info_label = ttk.Label(
-            info_frame,
-            text="Select a voice model to see details",
-            style="Time.TLabel",
-            wraplength=600,
-        )
-        self.voice_info_label.grid(row=0, column=1, sticky=tk.W, padx=(10, 0))
-
-        # Configure grid weights for voice frame
-        model_selection_frame.columnconfigure(1, weight=1)
-        speaker_selection_frame.columnconfigure(1, weight=1)
-        info_frame.columnconfigure(1, weight=1)
-
-        # Speed control
-        speed_frame = ttk.Frame(voice_frame, style="Dark.TFrame")
-        speed_frame.grid(
-            row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(15, 0)
-        )
-
-        ttk.Label(speed_frame, text="⚡ Generation Speed:", style="Dark.TLabel").grid(
-            row=0, column=0, sticky=tk.W
-        )
-        self.speed_var = tk.DoubleVar(value=1.0)
-        speed_scale = ttk.Scale(
-            speed_frame,
-            from_=0.5,
-            to=3.0,
-            variable=self.speed_var,
-            orient=tk.HORIZONTAL,
-            style="Dark.Horizontal.TScale",
-        )
-        speed_scale.grid(row=0, column=1, padx=(15, 10), sticky=(tk.W, tk.E))
-        self.speed_label = ttk.Label(speed_frame, text="1.0x", style="Dark.TLabel")
-        self.speed_label.grid(row=0, column=2, padx=(5, 0))
-
-        # Update speed label when scale changes
-        speed_scale.configure(command=self.update_speed_label)
-
-        # Configure speed frame grid weights
-        speed_frame.columnconfigure(1, weight=1)
-
-        # Text input frame with dark theme
-        text_frame = ttk.LabelFrame(
-            main_frame,
-            text="📝 Enhanced Text Input",
-            style="Dark.TLabelframe",
-            padding="15",
-        )
-        text_frame.grid(
-            row=2, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 15)
-        )
-
-        # Text controls frame
-        text_controls_frame = ttk.Frame(text_frame, style="Dark.TFrame")
-        text_controls_frame.grid(
-            row=0, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10)
-        )
-
-        # Import/Export buttons with distinctive colors
-        ttk.Button(
-            text_controls_frame,
-            text="📁 Import Text",
-            command=self.import_text,
-            style="Utility.TButton",
-        ).grid(row=0, column=0, padx=(0, 10))
-        ttk.Button(
-            text_controls_frame,
-            text="💾 Export Text",
-            command=self.export_text,
-            style="Utility.TButton",
-        ).grid(row=0, column=1, padx=(0, 10))
-        ttk.Button(
-            text_controls_frame,
-            text="🧹 Clear",
-            command=self.clear_text,
-            style="Warning.TButton",
-        ).grid(row=0, column=2, padx=(0, 10))
-
-        # Text preprocessing options
-        preprocess_frame = ttk.LabelFrame(
-            text_frame,
-            text="🔧 Text Processing Options",
-            style="Dark.TLabelframe",
-            padding="10",
-        )
-        preprocess_frame.grid(
-            row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10)
-        )
-
-        ttk.Checkbutton(
-            preprocess_frame,
-            text="Normalize whitespace",
-            variable=self.text_options["normalize_whitespace"],
-            style="Dark.TRadiobutton",
-        ).grid(row=0, column=0, sticky=tk.W, padx=(0, 15))
-        ttk.Checkbutton(
-            preprocess_frame,
-            text="Normalize punctuation",
-            variable=self.text_options["normalize_punctuation"],
-            style="Dark.TRadiobutton",
-        ).grid(row=0, column=1, sticky=tk.W, padx=(0, 15))
-        ttk.Checkbutton(
-            preprocess_frame,
-            text="Remove URLs",
-            variable=self.text_options["remove_urls"],
-            style="Dark.TRadiobutton",
-        ).grid(row=0, column=2, sticky=tk.W, padx=(0, 15))
-        ttk.Checkbutton(
-            preprocess_frame,
-            text="Remove emails",
-            variable=self.text_options["remove_emails"],
-            style="Dark.TRadiobutton",
-        ).grid(row=1, column=0, sticky=tk.W, padx=(0, 15))
-        ttk.Checkbutton(
-            preprocess_frame,
-            text="Remove duplicate lines",
-            variable=self.text_options["remove_duplicates"],
-            style="Dark.TRadiobutton",
-        ).grid(row=1, column=1, sticky=tk.W, padx=(0, 15))
-        ttk.Checkbutton(
-            preprocess_frame,
-            text="Numbers to words (123→one hundred...)",
-            variable=self.text_options["numbers_to_words"],
-            style="Dark.TRadiobutton",
-        ).grid(row=1, column=2, sticky=tk.W, padx=(0, 15))
-        ttk.Checkbutton(
-            preprocess_frame,
-            text="Expand abbreviations (Dr.→Doctor)",
-            variable=self.text_options["expand_abbreviations"],
-            style="Dark.TRadiobutton",
-        ).grid(row=2, column=0, sticky=tk.W, padx=(0, 15))
-        ttk.Checkbutton(
-            preprocess_frame,
-            text="Pronounce acronyms (NASA→N A S A)",
-            variable=self.text_options["handle_acronyms"],
-            style="Dark.TRadiobutton",
-        ).grid(row=2, column=1, sticky=tk.W, padx=(0, 15))
-        ttk.Checkbutton(
-            preprocess_frame,
-            text="Add natural pauses",
-            variable=self.text_options["add_pauses"],
-            style="Dark.TRadiobutton",
-        ).grid(row=2, column=2, sticky=tk.W, padx=(0, 15))
-
-        # SSML Support Frame - Professional-grade speech control
-        ssml_frame = ttk.LabelFrame(
-            text_frame,
-            text="🎭 SSML Support (Professional Speech Control)",
-            style="Dark.TLabelframe",
-            padding="10",
-        )
-        ssml_frame.grid(
-            row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0)
-        )
-
-        # SSML controls row 1
-        ttk.Checkbutton(
-            ssml_frame,
-            text="Enable SSML parsing",
-            variable=self.ssml_enabled,
-            command=self.on_ssml_toggle,
-            style="Dark.TRadiobutton",
-        ).grid(row=0, column=0, sticky=tk.W, padx=(0, 15))
-        ttk.Checkbutton(
-            ssml_frame,
-            text="Auto-detect SSML markup",
-            variable=self.ssml_auto_detect,
-            style="Dark.TRadiobutton",
-        ).grid(row=0, column=1, sticky=tk.W, padx=(0, 15))
-
-        # SSML control buttons
-        ttk.Button(
-            ssml_frame,
-            text="📋 SSML Templates",
-            command=self.show_ssml_templates,
-            style="Dark.TButton",
-        ).grid(row=0, column=2, padx=(0, 10))
-        ttk.Button(
-            ssml_frame,
-            text="❓ SSML Reference",
-            command=self.show_ssml_reference,
-            style="Dark.TButton",
-        ).grid(row=0, column=3, padx=(0, 10))
-        ttk.Button(
-            ssml_frame,
-            text="✓ Validate SSML",
-            command=self.validate_ssml_input,
-            style="Dark.TButton",
-        ).grid(row=0, column=4, padx=(0, 10))
-
-        # SSML info label
-        self.ssml_info_label = ttk.Label(
-            ssml_frame,
-            text="SSML enables: <emphasis>, <break>, <prosody>, <say-as>, and more",
-            style="Time.TLabel",
-        )
-        self.ssml_info_label.grid(
-            row=1, column=0, columnspan=5, sticky=tk.W, pady=(5, 0)
-        )
-
-        # Chunking info frame
-        chunking_frame = ttk.Frame(text_frame, style="Card.TFrame", padding="8")
-        chunking_frame.grid(
-            row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0)
-        )
-
-        ttk.Label(
-            chunking_frame, text="📄 Long Text Handling:", style="Dark.TLabel"
-        ).grid(row=0, column=0, sticky=tk.W)
-        self.chunking_info_label = ttk.Label(
-            chunking_frame,
-            text="Texts over 8,000 chars will be automatically split and stitched",
-            style="Time.TLabel",
-        )
-        self.chunking_info_label.grid(row=0, column=1, sticky=tk.W, padx=(10, 0))
-
-        # Create custom text widget with Dracula theme
-        self.text_widget = scrolledtext.ScrolledText(
-            text_frame,
-            width=75,
-            height=8,
-            wrap=tk.WORD,
-            bg=self.colors["bg_primary"],
-            fg=self.colors["fg_primary"],
-            insertbackground=self.colors["accent_cyan"],
-            selectbackground=self.colors["selection"],
-            selectforeground=self.colors["fg_primary"],
-            font=("Segoe UI", 11),
-            borderwidth=1,
-            relief="solid",
-        )
-        self.text_widget.grid(
-            row=4, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S)
-        )
-
-        # Bind text change events for real-time validation and stats
-        self.text_widget.bind("<KeyRelease>", self.on_text_change)
-        self.text_widget.bind("<Button-1>", self.on_text_change)
-
-        # Bind paste events to remove duplicate lines (multiple methods for compatibility)
-        self.text_widget.bind("<<Paste>>", self.on_paste)
-        self.text_widget.bind("<Control-v>", self.on_paste)
-        self.text_widget.bind("<Control-V>", self.on_paste)
-        self.text_widget.bind("<Shift-Insert>", self.on_paste)
-
-        # Configure text tags for follow-along word highlighting
-        self.text_widget.tag_configure(
-            "current_word",
-            background=self.colors["accent_pink"],
-            foreground=self.colors["bg_primary"],
-            font=("Segoe UI", 11, "bold"),
-        )
-        self.text_widget.tag_configure(
-            "spoken_word", foreground=self.colors["fg_muted"]
-        )
-        self.text_widget.tag_configure(
-            "upcoming_word", foreground=self.colors["fg_primary"]
-        )
-
-        # Text statistics frame
-        stats_frame = ttk.Frame(text_frame, style="Card.TFrame", padding="8")
-        stats_frame.grid(
-            row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0)
-        )
-
-        ttk.Label(stats_frame, text="📊 Text Stats:", style="Dark.TLabel").grid(
-            row=0, column=0, sticky=tk.W
-        )
-        self.stats_label = ttk.Label(
-            stats_frame,
-            text="Characters: 0 | Words: 0 | Lines: 0 | Sentences: 0",
-            style="Time.TLabel",
-        )
-        self.stats_label.grid(row=0, column=1, sticky=tk.W, padx=(10, 0))
-
-        # Validation status
-        self.validation_label = ttk.Label(
-            stats_frame, text="✓ Ready", style="Dark.TLabel"
-        )
-        self.validation_label.grid(row=0, column=2, sticky=tk.E, padx=(20, 0))
-
-        # Add sample text with better guidance
+        # Set sample text
         sample_text = (
             "Welcome to the enhanced high-quality English text-to-speech system! "
-            "This version features improved text processing, performance optimizations, and audio caching. "
-            "Try editing this text, importing your own content, or adjusting the processing options above. "
-            "The system will provide real-time feedback on text statistics and validation."
         )
-        self.text_widget.insert(tk.END, sample_text)
+        self.text_widget.setPlainText(sample_text)
+        text_layout.addWidget(self.text_widget)
+
+        # Text Stats Frame
+        stats_frame = QFrame()
+        stats_frame.setObjectName("cardFrame")
+        stats_layout = QHBoxLayout(stats_frame)
+        stats_layout.setContentsMargins(8, 8, 8, 8)
+        stats_icon = QLabel("📊 Text Stats:")
+        self.stats_label = QLabel("Characters: 0 | Words: 0 | Lines: 0 | Sentences: 0")
+        self.stats_label.setObjectName("timeLabel")
+        self.validation_label = QLabel("✓ Ready")
+        stats_layout.addWidget(stats_icon)
+        stats_layout.addWidget(self.stats_label, 1)
+        stats_layout.addWidget(self.validation_label)
+        text_layout.addWidget(stats_frame)
+
+        main_layout.addWidget(text_group)
+
+        # === Controls Frame ===
+        controls_layout = QHBoxLayout()
+        controls_layout.setSpacing(10)
+
+        self.generate_btn = QPushButton("🎵 Generate Speech")
+        self.generate_btn.setObjectName("primaryButton")
+        self.generate_btn.clicked.connect(self.generate_speech)
+
+        self.cancel_btn = QPushButton("⏹ Cancel")
+        self.cancel_btn.setObjectName("dangerButton")
+        self.cancel_btn.clicked.connect(self.cancel_generation)
+        self.cancel_btn.hide()
+
+        self.play_btn = QPushButton("▶ Play")
+        self.play_btn.setObjectName("successButton")
+        self.play_btn.clicked.connect(self.play_audio)
+        self.play_btn.setEnabled(False)
+
+        self.stop_btn = QPushButton("⏸ Pause")
+        self.stop_btn.setObjectName("warningButton")
+        self.stop_btn.clicked.connect(self.stop_audio)
+        self.stop_btn.setEnabled(False)
+
+        self.save_btn = QPushButton("💾 Save As...")
+        self.save_btn.clicked.connect(self.save_audio)
+        self.save_btn.setEnabled(False)
+
+        self.shortcuts_btn = QPushButton("⌨️ Shortcuts (F1)")
+        self.shortcuts_btn.clicked.connect(self.show_keyboard_shortcuts)
+
+        controls_layout.addWidget(self.generate_btn)
+        controls_layout.addWidget(self.cancel_btn)
+        controls_layout.addWidget(self.play_btn)
+        controls_layout.addWidget(self.stop_btn)
+        controls_layout.addWidget(self.save_btn)
+        controls_layout.addStretch()
+        controls_layout.addWidget(self.shortcuts_btn)
+
+        main_layout.addLayout(controls_layout)
+
+        # === Playback Controls Frame ===
+        playback_group = QGroupBox("🎛️ Audio Playback Controls")
+        playback_layout = QVBoxLayout(playback_group)
+        playback_layout.setSpacing(10)
+
+        # Time Display
+        time_frame = QFrame()
+        time_frame.setObjectName("cardFrame")
+        time_layout = QHBoxLayout(time_frame)
+        time_layout.setContentsMargins(8, 8, 8, 8)
+        time_icon = QLabel("⏱️ Time:")
+        self.time_label = QLabel("00:00 / 00:00")
+        self.time_label.setObjectName("timeLabel")
+        time_layout.addWidget(time_icon)
+        time_layout.addWidget(self.time_label)
+        time_layout.addStretch()
+        playback_layout.addWidget(time_frame)
+
+        # Seek Bar
+        seek_row = QHBoxLayout()
+        seek_label = QLabel("🎯 Position:")
+        self.seek_slider = QSlider(Qt.Horizontal)
+        self.seek_slider.setMinimum(0)
+        self.seek_slider.setMaximum(1000)
+        self.seek_slider.setValue(0)
+        self.seek_slider.setEnabled(False)
+        self.seek_slider.valueChanged.connect(self.on_seek)
+        seek_row.addWidget(seek_label)
+        seek_row.addWidget(self.seek_slider, 1)
+        playback_layout.addLayout(seek_row)
+
+        # Playback Speed and Volume Row
+        speed_volume_row = QHBoxLayout()
+
+        # Playback Speed
+        pb_speed_label = QLabel("🚀 Playback Speed (pitch preserved):")
+        self.playback_speed_slider = QSlider(Qt.Horizontal)
+        self.playback_speed_slider.setMinimum(50)
+        self.playback_speed_slider.setMaximum(200)
+        self.playback_speed_slider.setValue(100)
+        self.playback_speed_slider.valueChanged.connect(
+            self.update_playback_speed_label
+        )
+        self.playback_speed_label = QLabel("1.0x")
+
+        speed_volume_row.addWidget(pb_speed_label)
+        speed_volume_row.addWidget(self.playback_speed_slider)
+        speed_volume_row.addWidget(self.playback_speed_label)
+        speed_volume_row.addSpacing(20)
+
+        # Volume
+        volume_label = QLabel("🔊 Volume:")
+        self.volume_slider = QSlider(Qt.Horizontal)
+        self.volume_slider.setMinimum(0)
+        self.volume_slider.setMaximum(100)
+        self.volume_slider.setValue(70)
+        self.volume_slider.valueChanged.connect(self.update_volume_label)
+        self.volume_label = QLabel("70%")
+
+        speed_volume_row.addWidget(volume_label)
+        speed_volume_row.addWidget(self.volume_slider)
+        speed_volume_row.addWidget(self.volume_label)
+
+        playback_layout.addLayout(speed_volume_row)
+
+        # Follow-Along Frame
+        follow_frame = QFrame()
+        follow_frame.setObjectName("cardFrame")
+        follow_layout = QHBoxLayout(follow_frame)
+        follow_layout.setContentsMargins(8, 8, 8, 8)
+
+        self.follow_along_cb = QCheckBox("📖 Follow Along (highlight current word)")
+        self.follow_along_cb.setChecked(True)
+
+        current_label = QLabel("Current:")
+        self.follow_along_word_label = QLabel("---")
+        self.follow_along_word_label.setObjectName("timeLabel")
+        self.follow_along_word_label.setStyleSheet(
+            f"color: {self.colors['accent_pink']}; font-weight: bold;"
+        )
+
+        progress_label = QLabel("Progress:")
+        self.follow_along_progress_label = QLabel("0 / 0 words")
+        self.follow_along_progress_label.setObjectName("timeLabel")
+
+        follow_layout.addWidget(self.follow_along_cb)
+        follow_layout.addSpacing(20)
+        follow_layout.addWidget(current_label)
+        follow_layout.addWidget(self.follow_along_word_label)
+        follow_layout.addSpacing(20)
+        follow_layout.addWidget(progress_label)
+        follow_layout.addWidget(self.follow_along_progress_label)
+        follow_layout.addStretch()
+
+        playback_layout.addWidget(follow_frame)
+
+        main_layout.addWidget(playback_group)
+
+        # === Status Frame ===
+        status_group = QGroupBox("📊 Status & Performance")
+        status_layout = QVBoxLayout(status_group)
+        status_layout.setSpacing(10)
+
+        # Performance Info
+        perf_frame = QFrame()
+        perf_frame.setObjectName("cardFrame")
+        perf_layout = QHBoxLayout(perf_frame)
+        perf_layout.setContentsMargins(8, 8, 8, 8)
+        perf_icon = QLabel("🚀 Performance:")
+        self.perf_label = QLabel("Cache: 0 items | Avg RTF: N/A")
+        self.perf_label.setObjectName("timeLabel")
+        self.clear_cache_btn = QPushButton("🗑️ Clear Cache")
+        self.clear_cache_btn.setObjectName("warningButton")
+        self.clear_cache_btn.clicked.connect(self.clear_cache)
+        perf_layout.addWidget(perf_icon)
+        perf_layout.addWidget(self.perf_label, 1)
+        perf_layout.addWidget(self.clear_cache_btn)
+        status_layout.addWidget(perf_frame)
+
+        # Status Text
+        self.status_text = QTextEdit()
+        self.status_text.setObjectName("statusText")
+        self.status_text.setMaximumHeight(120)
+        self.status_text.setReadOnly(True)
+        status_layout.addWidget(self.status_text)
+
+        main_layout.addWidget(status_group)
+
+        # Progress Bar
+        self.progress = QProgressBar()
+        self.progress.setMinimum(0)
+        self.progress.setMaximum(0)  # Indeterminate
+        self.progress.setTextVisible(False)
+        self.progress.hide()
+        main_layout.addWidget(self.progress)
 
         # Initial text stats update
-        self.on_text_change(None)
+        self.on_text_change()
 
-        # Controls frame with better spacing
-        controls_frame = ttk.Frame(main_frame, style="Dark.TFrame")
-        controls_frame.grid(row=3, column=0, columnspan=3, pady=(0, 15))
+    def _update_text_option(self, key, state):
+        """Update text processing option."""
+        self.text_options[key] = bool(state)
 
-        # Generate button (primary action)
-        self.generate_btn = ttk.Button(
-            controls_frame,
-            text="🎵 Generate Speech",
-            command=self.generate_speech,
-            style="Primary.TButton",
-        )
-        self.generate_btn.grid(row=0, column=0, padx=(0, 10))
+    @property
+    def speed_var(self):
+        """Get speed value (0.5 - 3.0)."""
+        if hasattr(self, "speed_slider"):
+            return self.speed_slider.value() / 100.0
+        return getattr(self, "_speed_var", 1.0)
 
-        # Cancel button (initially hidden)
-        self.cancel_btn = ttk.Button(
-            controls_frame,
-            text="⏹ Cancel",
-            command=self.cancel_generation,
-            style="Danger.TButton",
-        )
-        self.cancel_btn.grid(row=0, column=1, padx=(0, 15))
-        self.cancel_btn.grid_remove()  # Hide initially
+    @speed_var.setter
+    def speed_var(self, value):
+        """Set speed value (0.5 - 3.0)."""
+        self._speed_var = float(value)
+        if hasattr(self, "speed_slider"):
+            self.speed_slider.setValue(int(self._speed_var * 100))
 
-        # Play button
-        self.play_btn = ttk.Button(
-            controls_frame,
-            text="▶ Play",
-            command=self.play_audio,
-            state=tk.DISABLED,
-            style="Success.TButton",
-        )
-        self.play_btn.grid(row=0, column=2, padx=(0, 10))
+    @property
+    def playback_speed_var(self):
+        """Get playback speed value."""
+        if hasattr(self, "playback_speed_slider"):
+            return self.playback_speed_slider.value() / 100.0
+        return getattr(self, "_playback_speed_var", 1.0)
 
-        # Stop button
-        self.stop_btn = ttk.Button(
-            controls_frame,
-            text="⏸ Pause",
-            command=self.stop_audio,
-            state=tk.DISABLED,
-            style="Warning.TButton",
-        )
-        self.stop_btn.grid(row=0, column=3, padx=(0, 10))
+    @playback_speed_var.setter
+    def playback_speed_var(self, value):
+        """Set playback speed value."""
+        self._playback_speed_var = float(value)
+        if hasattr(self, "playback_speed_slider"):
+            self.playback_speed_slider.setValue(int(self._playback_speed_var * 100))
 
-        # Save button
-        self.save_btn = ttk.Button(
-            controls_frame,
-            text="💾 Save As...",
-            command=self.save_audio,
-            state=tk.DISABLED,
-            style="Dark.TButton",
-        )
-        self.save_btn.grid(row=0, column=4, padx=(0, 10))
+    @property
+    def volume_var(self):
+        """Get volume value."""
+        if hasattr(self, "volume_slider"):
+            return self.volume_slider.value()
+        return getattr(self, "_volume_var", 70)
 
-        # Keyboard shortcuts help button
-        self.shortcuts_btn = ttk.Button(
-            controls_frame,
-            text="⌨️ Shortcuts (F1)",
-            command=self.show_keyboard_shortcuts,
-            style="Dark.TButton",
-        )
-        self.shortcuts_btn.grid(row=0, column=5, padx=(10, 0))
+    @volume_var.setter
+    def volume_var(self, value):
+        """Set volume value."""
+        self._volume_var = int(value)
+        if hasattr(self, "volume_slider"):
+            self.volume_slider.setValue(self._volume_var)
 
-        # Audio Playback Controls Frame with enhanced styling
-        playback_frame = ttk.LabelFrame(
-            main_frame,
-            text="🎛️ Audio Playback Controls",
-            style="Dark.TLabelframe",
-            padding="15",
-        )
-        playback_frame.grid(
-            row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 15)
-        )
+    @property
+    def seek_var(self):
+        """Get seek position value (0-100)."""
+        if hasattr(self, "seek_slider"):
+            return self.seek_slider.value() / 10.0
+        return getattr(self, "_seek_var", 0.0)
 
-        # Time display with modern styling
-        time_frame = ttk.Frame(playback_frame, style="Card.TFrame", padding="8")
-        time_frame.grid(
-            row=0, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=(0, 10)
-        )
+    @seek_var.setter
+    def seek_var(self, value):
+        """Set seek position value (0-100)."""
+        self._seek_var = float(value)
+        if hasattr(self, "seek_slider"):
+            self.seek_slider.setValue(int(self._seek_var * 10))
 
-        ttk.Label(time_frame, text="⏱️ Time:", style="Dark.TLabel").grid(
-            row=0, column=0, sticky=tk.W, padx=(0, 10)
-        )
-        self.time_label = ttk.Label(
-            time_frame, text="00:00 / 00:00", style="Time.TLabel"
-        )
-        self.time_label.grid(row=0, column=1, sticky=tk.W)
+    @property
+    def ssml_enabled(self):
+        """Get SSML enabled state."""
+        if hasattr(self, "ssml_enabled_cb"):
+            return self.ssml_enabled_cb.isChecked()
+        return getattr(self, "_ssml_enabled", False)
 
-        # Seek bar with enhanced styling
-        seek_frame = ttk.Frame(playback_frame, style="Dark.TFrame")
-        seek_frame.grid(
-            row=1, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=(0, 15)
-        )
+    @ssml_enabled.setter
+    def ssml_enabled(self, value):
+        """Set SSML enabled state."""
+        self._ssml_enabled = bool(value)
+        if hasattr(self, "ssml_enabled_cb"):
+            self.ssml_enabled_cb.setChecked(self._ssml_enabled)
 
-        ttk.Label(seek_frame, text="🎯 Position:", style="Dark.TLabel").grid(
-            row=0, column=0, sticky=tk.W
-        )
-        self.seek_var = tk.DoubleVar(value=0.0)
-        self.seek_scale = ttk.Scale(
-            seek_frame,
-            from_=0.0,
-            to=100.0,
-            variable=self.seek_var,
-            orient=tk.HORIZONTAL,
-            command=self.on_seek,
-            style="Dark.Horizontal.TScale",
-        )
-        self.seek_scale.grid(row=0, column=1, padx=(15, 0), sticky=(tk.W, tk.E))
-        self.seek_scale.config(state=tk.DISABLED)
+    @property
+    def ssml_auto_detect(self):
+        """Get SSML auto-detect state."""
+        if hasattr(self, "ssml_auto_detect_cb"):
+            return self.ssml_auto_detect_cb.isChecked()
+        return getattr(self, "_ssml_auto_detect", True)
 
-        # Playback speed control with enhanced styling
-        playback_speed_frame = ttk.Frame(playback_frame, style="Dark.TFrame")
-        playback_speed_frame.grid(
-            row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(5, 0)
-        )
+    @ssml_auto_detect.setter
+    def ssml_auto_detect(self, value):
+        """Set SSML auto-detect state."""
+        self._ssml_auto_detect = bool(value)
+        if hasattr(self, "ssml_auto_detect_cb"):
+            self.ssml_auto_detect_cb.setChecked(self._ssml_auto_detect)
 
-        ttk.Label(
-            playback_speed_frame,
-            text="🚀 Playback Speed (pitch preserved):",
-            style="Dark.TLabel",
-        ).grid(row=0, column=0, sticky=tk.W)
-        self.playback_speed_var = tk.DoubleVar(value=1.0)
-        playback_speed_scale = ttk.Scale(
-            playback_speed_frame,
-            from_=0.5,
-            to=2.0,
-            variable=self.playback_speed_var,
-            orient=tk.HORIZONTAL,
-            command=self.update_playback_speed_label,
-            style="Dark.Horizontal.TScale",
-        )
-        playback_speed_scale.grid(row=0, column=1, padx=(15, 10), sticky=(tk.W, tk.E))
-        self.playback_speed_label = ttk.Label(
-            playback_speed_frame, text="1.0x", style="Dark.TLabel"
-        )
-        self.playback_speed_label.grid(row=0, column=2, padx=(5, 0))
+    @property
+    def follow_along_enabled(self):
+        """Get follow-along enabled state."""
+        if hasattr(self, "follow_along_cb"):
+            return self.follow_along_cb.isChecked()
+        return getattr(self, "_follow_along_enabled", True)
 
-        # Volume control with enhanced styling
-        volume_frame = ttk.Frame(playback_frame, style="Dark.TFrame")
-        volume_frame.grid(
-            row=2, column=2, columnspan=2, sticky=(tk.W, tk.E), pady=(5, 0)
-        )
-
-        ttk.Label(volume_frame, text="🔊 Volume:", style="Dark.TLabel").grid(
-            row=0, column=0, sticky=tk.W
-        )
-        self.volume_var = tk.DoubleVar(value=70.0)
-        volume_scale = ttk.Scale(
-            volume_frame,
-            from_=0.0,
-            to=100.0,
-            variable=self.volume_var,
-            orient=tk.HORIZONTAL,
-            command=self.update_volume_label,
-            style="Dark.Horizontal.TScale",
-        )
-        volume_scale.grid(row=0, column=1, padx=(15, 10), sticky=(tk.W, tk.E))
-        self.volume_label = ttk.Label(volume_frame, text="70%", style="Dark.TLabel")
-        self.volume_label.grid(row=0, column=2, padx=(5, 0))
-
-        # Follow-along word highlighting frame
-        follow_along_frame = ttk.Frame(playback_frame, style="Card.TFrame", padding="8")
-        follow_along_frame.grid(
-            row=3, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=(10, 0)
-        )
-
-        # Enable/disable checkbox
-        ttk.Checkbutton(
-            follow_along_frame,
-            text="📖 Follow Along (highlight current word)",
-            variable=self.follow_along_enabled,
-            style="Dark.TRadiobutton",
-        ).grid(row=0, column=0, sticky=tk.W, padx=(0, 20))
-
-        # Current word display
-        ttk.Label(follow_along_frame, text="Current:", style="Dark.TLabel").grid(
-            row=0, column=1, sticky=tk.W, padx=(10, 5)
-        )
-        self.follow_along_word_label = tk.Label(
-            follow_along_frame,
-            text="---",
-            font=("Segoe UI", 12, "bold"),
-            bg=self.colors["bg_tertiary"],
-            fg=self.colors["accent_pink"],
-            padx=10,
-            pady=2,
-        )
-        self.follow_along_word_label.grid(row=0, column=2, sticky=tk.W, padx=(0, 20))
-
-        # Word progress display
-        ttk.Label(follow_along_frame, text="Progress:", style="Dark.TLabel").grid(
-            row=0, column=3, sticky=tk.W, padx=(10, 5)
-        )
-        self.follow_along_progress_label = ttk.Label(
-            follow_along_frame, text="0 / 0 words", style="Time.TLabel"
-        )
-        self.follow_along_progress_label.grid(row=0, column=4, sticky=tk.W)
-
-        follow_along_frame.columnconfigure(2, weight=1)
-
-        # Status frame with dark theme
-        status_frame = ttk.LabelFrame(
-            main_frame,
-            text="📊 Status & Performance",
-            style="Dark.TLabelframe",
-            padding="15",
-        )
-        status_frame.grid(
-            row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 15)
-        )
-
-        # Performance info frame
-        perf_info_frame = ttk.Frame(status_frame, style="Card.TFrame", padding="8")
-        perf_info_frame.grid(
-            row=0, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10)
-        )
-
-        ttk.Label(perf_info_frame, text="🚀 Performance:", style="Dark.TLabel").grid(
-            row=0, column=0, sticky=tk.W
-        )
-        self.perf_label = ttk.Label(
-            perf_info_frame, text="Cache: 0 items | Avg RTF: N/A", style="Time.TLabel"
-        )
-        self.perf_label.grid(row=0, column=1, sticky=tk.W, padx=(10, 0))
-
-        # Cache management buttons
-        ttk.Button(
-            perf_info_frame,
-            text="🗑️ Clear Cache",
-            command=self.clear_cache,
-            style="Warning.TButton",
-        ).grid(row=0, column=2, sticky=tk.E, padx=(20, 0))
-
-        # Status text with Dracula theme
-        self.status_text = scrolledtext.ScrolledText(
-            status_frame,
-            width=75,
-            height=6,
-            wrap=tk.WORD,
-            bg=self.colors["bg_primary"],
-            fg=self.colors["fg_secondary"],
-            insertbackground=self.colors["accent_cyan"],
-            selectbackground=self.colors["selection"],
-            selectforeground=self.colors["fg_primary"],
-            font=("Consolas", 9),
-            borderwidth=1,
-            relief="solid",
-        )
-        self.status_text.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E))
-
-        # Progress bar with dark theme (can switch between indeterminate and determinate)
-        self.progress = ttk.Progressbar(
-            main_frame, mode="indeterminate", style="Dark.Horizontal.TProgressbar"
-        )
-        self.progress.grid(
-            row=6, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 15)
-        )
-
-        # Configure grid weights
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(2, weight=1)
-        text_frame.columnconfigure(0, weight=1)
-        text_frame.rowconfigure(0, weight=1)
-        voice_frame.columnconfigure(0, weight=1)
-        status_frame.columnconfigure(0, weight=1)
-        playback_frame.columnconfigure(1, weight=1)
-        playback_frame.columnconfigure(3, weight=1)
-        seek_frame.columnconfigure(1, weight=1)
-        playback_speed_frame.columnconfigure(1, weight=1)
-        volume_frame.columnconfigure(1, weight=1)
+    @follow_along_enabled.setter
+    def follow_along_enabled(self, value):
+        """Set follow-along enabled state."""
+        self._follow_along_enabled = bool(value)
+        if hasattr(self, "follow_along_cb"):
+            self.follow_along_cb.setChecked(self._follow_along_enabled)
 
     def update_speed_label(self, value):
-        """Update speed label when scale changes"""
-        self.speed_label.config(text=f"{float(value):.1f}x")
+        """Update speed label when slider changes."""
+        speed = value / 100.0
+        self.speed_value_label.setText(f"{speed:.1f}x")
 
     def update_playback_speed_label(self, value):
-        """Update playback speed label when scale changes"""
-        self.playback_speed_label.config(text=f"{float(value):.1f}x")
+        """Update playback speed label when slider changes."""
+        speed = value / 100.0
+        self.playback_speed_label.setText(f"{speed:.1f}x")
 
     def update_volume_label(self, value):
-        """Update volume label when scale changes"""
-        self.volume_label.config(text=f"{int(float(value))}%")
+        """Update volume label when slider changes."""
+        self.volume_label.setText(f"{value}%")
         if self.current_sound and self.is_playing:
-            self.current_sound.set_volume(float(value) / 100.0)
+            self.current_sound.set_volume(value / 100.0)
 
     def update_performance_display(self):
-        """Update performance information display"""
+        """Update performance information display."""
         cache_size = len(self.audio_cache.cache)
         avg_rtf = self.performance_monitor.get_average_rtf()
 
@@ -672,84 +547,85 @@ class TTSGuiUiMixin:
         else:
             perf_text += " | Avg RTF: N/A"
 
-        self.perf_label.config(text=perf_text)
+        self.perf_label.setText(perf_text)
 
     def on_seek(self, value):
-        """Handle seek bar changes"""
+        """Handle seek slider changes."""
         if self.audio_duration > 0 and not self.is_playing:
-            seek_position = (float(value) / 100.0) * self.audio_duration
+            seek_position = (value / 1000.0) * self.audio_duration
             self.pause_position = seek_position
             self.update_time_display(seek_position)
 
     def format_time(self, seconds):
-        """Format time in MM:SS format"""
+        """Format time in MM:SS format."""
         minutes = int(seconds // 60)
-        seconds = int(seconds % 60)
-        return f"{minutes:02d}:{seconds:02d}"
+        secs = int(seconds % 60)
+        return f"{minutes:02d}:{secs:02d}"
 
     def update_time_display(self, current_time=None):
-        """Update the time display"""
+        """Update the time display."""
         if current_time is None:
             if self.is_playing:
                 elapsed = time.time() - self.playback_start_time
-                current_time = (
-                    self.pause_position + elapsed * self.playback_speed_var.get()
-                )
+                current_time = self.pause_position + elapsed * self.playback_speed_var
             else:
                 current_time = self.pause_position
 
         current_time = min(current_time, self.audio_duration)
         current_str = self.format_time(current_time)
         total_str = self.format_time(self.audio_duration)
-        self.time_label.config(text=f"{current_str} / {total_str}")
+        self.time_label.setText(f"{current_str} / {total_str}")
 
         if self.audio_duration > 0:
-            progress = (current_time / self.audio_duration) * 100
-            self.seek_var.set(progress)
+            progress = (current_time / self.audio_duration) * 1000
+            self.seek_slider.blockSignals(True)
+            self.seek_slider.setValue(int(progress))
+            self.seek_slider.blockSignals(False)
 
     def log_status(self, message, level="info"):
-        """Add message to status text widget with color coding"""
+        """Add message to status text widget with color coding."""
+        if QThread.currentThread() != self.main_window.thread():
+            QTimer.singleShot(0, lambda: self.log_status(message, level))
+            return
+
         timestamp = time.strftime("%H:%M:%S")
-        formatted_message = f"[{timestamp}] {message}\n"
+        formatted_message = f"[{timestamp}] {message}"
 
-        # Configure text tags for different message types with Dracula colors
-        if not hasattr(self, "_tags_configured"):
-            self.status_text.tag_configure(
-                "info", foreground=self.colors["fg_secondary"]
-            )
-            self.status_text.tag_configure(
-                "success", foreground=self.colors["accent_green"]
-            )
-            self.status_text.tag_configure(
-                "warning", foreground=self.colors["accent_orange"]
-            )
-            self.status_text.tag_configure(
-                "error", foreground=self.colors["accent_red"]
-            )
-            self.status_text.tag_configure(
-                "timestamp", foreground=self.colors["fg_muted"]
-            )
-            self._tags_configured = True
-
-        # Determine message type based on content
+        # Determine color based on message type
         if "✓" in message or "successfully" in message.lower():
-            tag = "success"
+            color = self.colors["accent_green"]
         elif "⚠" in message or "warning" in message.lower():
-            tag = "warning"
+            color = self.colors["accent_orange"]
         elif "✗" in message or "error" in message.lower():
-            tag = "error"
+            color = self.colors["accent_red"]
         else:
-            tag = "info"
+            color = self.colors["fg_secondary"]
 
-        self.status_text.insert(tk.END, formatted_message, tag)
-        self.status_text.see(tk.END)
-        self.root.update_idletasks()
+        # Append with color
+        cursor = self.status_text.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+
+        # Insert colored text
+        char_format = cursor.charFormat()
+        char_format.setForeground(QColor(color))
+        cursor.setCharFormat(char_format)
+        cursor.insertText(formatted_message + "\n")
+
+        # Scroll to bottom
+        self.status_text.setTextCursor(cursor)
+        self.status_text.ensureCursorVisible()
 
     def clear_cache(self):
-        """Clear audio cache"""
-        if messagebox.askyesno(
-            "Clear Cache", "Are you sure you want to clear the audio cache?"
-        ):
+        """Clear audio cache."""
+        reply = QMessageBox.question(
+            self.main_window,
+            "Clear Cache",
+            "Are you sure you want to clear the audio cache?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+
+        if reply == QMessageBox.Yes:
             self.audio_cache.clear()
             self.update_performance_display()
             self.log_status("🗑️ Audio cache cleared")

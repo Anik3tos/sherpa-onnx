@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+"""
+Speech generation mixin for the TTS GUI using PySide6 (Qt).
+"""
 
-import tkinter as tk
 import pygame
 import time
 import uuid
@@ -10,14 +12,23 @@ import hashlib
 import numpy as np
 import soundfile as sf
 
+from tts_gui.common import QTimer, Qt
+
 
 class TTSGuiGenerationMixin:
+    """Mixin class providing speech generation functionality."""
+
+    def _ui_call(self, func):
+        """Run a callable on the UI thread."""
+        QTimer.singleShot(0, self.main_window, func)
+
     def generate_speech_thread(self):
+        """Thread function for generating speech."""
         try:
             if self.generation_cancelled:
                 return
 
-            raw_text = self.text_widget.get(1.0, tk.END).strip()
+            raw_text = self.text_widget.toPlainText().strip()
             if not raw_text:
                 self.log_status("⚠ Please enter some text to synthesize")
                 return
@@ -30,7 +41,7 @@ class TTSGuiGenerationMixin:
                 self.log_status(f"⚠ Text validation failed: {error_msg}")
                 return
 
-            options = {key: var.get() for key, var in self.text_options.items()}
+            options = {key: var for key, var in self.text_options.items()}
             options.update({"fix_encoding": True, "replace_modern_terms": True})
             text = self.text_processor.preprocess_text(raw_text, options)
 
@@ -64,7 +75,7 @@ class TTSGuiGenerationMixin:
 
             config_id, config = self.selected_voice_config
             model_type = config["model_type"]
-            speed = self.speed_var.get()
+            speed = self.speed_var
             speaker_id = self.get_current_speaker_id()
 
             # Check if text needs chunking
@@ -91,9 +102,9 @@ class TTSGuiGenerationMixin:
 
         finally:
             # Re-enable generate button, hide cancel button and progress
-            self.root.after(0, lambda: self.generate_btn.config(state=tk.NORMAL))
-            self.root.after(0, lambda: self.cancel_btn.grid_remove())
-            self.root.after(0, lambda: self.progress.stop())
+            self._ui_call(lambda: self.generate_btn.setEnabled(True))
+            self._ui_call(lambda: self.cancel_btn.hide())
+            self._ui_call(lambda: self.progress.setRange(0, 100))
 
     def _generate_single_speech(self, text, model_type, speed, speaker_id):
         """Generate speech for a single chunk of text"""
@@ -132,19 +143,20 @@ class TTSGuiGenerationMixin:
             )
 
             # Setup follow-along word highlighting
-            self.root.after(
+            QTimer.singleShot(
                 0,
+                self.main_window,
                 lambda t=text, d=self.audio_duration, s=speed: self.setup_follow_along_for_audio(
                     t, d, s
                 ),
             )
 
             # Enable playback controls
-            self.root.after(0, lambda: self.play_btn.config(state=tk.NORMAL))
-            self.root.after(0, lambda: self.save_btn.config(state=tk.NORMAL))
-            self.root.after(0, lambda: self.seek_scale.config(state=tk.NORMAL))
-            self.root.after(0, lambda: self.update_time_display(0.0))
-            self.root.after(0, lambda: self.update_performance_display())
+            self._ui_call(lambda: self.play_btn.setEnabled(True))
+            self._ui_call(lambda: self.save_btn.setEnabled(True))
+            self._ui_call(lambda: self.seek_slider.setEnabled(True))
+            self._ui_call(lambda: self.update_time_display(0.0))
+            self._ui_call(lambda: self.update_performance_display())
             return
 
         # Check for cancellation before starting generation
@@ -220,19 +232,20 @@ class TTSGuiGenerationMixin:
         self.log_status(f"  Average RTF ({model_type}): {avg_rtf:.3f}")
 
         # Setup follow-along word highlighting
-        self.root.after(
+        QTimer.singleShot(
             0,
+            self.main_window,
             lambda t=text, d=self.audio_duration, s=speed: self.setup_follow_along_for_audio(
                 t, d, s
             ),
         )
 
         # Enable playback buttons and controls
-        self.root.after(0, lambda: self.play_btn.config(state=tk.NORMAL))
-        self.root.after(0, lambda: self.save_btn.config(state=tk.NORMAL))
-        self.root.after(0, lambda: self.seek_scale.config(state=tk.NORMAL))
-        self.root.after(0, lambda: self.update_time_display(0.0))
-        self.root.after(0, lambda: self.update_performance_display())
+        self._ui_call(lambda: self.play_btn.setEnabled(True))
+        self._ui_call(lambda: self.save_btn.setEnabled(True))
+        self._ui_call(lambda: self.seek_slider.setEnabled(True))
+        self._ui_call(lambda: self.update_time_display(0.0))
+        self._ui_call(lambda: self.update_performance_display())
 
     def _generate_chunked_speech(self, text, model_type, speed, speaker_id):
         """Generate speech for long text by splitting into chunks"""
@@ -286,8 +299,10 @@ class TTSGuiGenerationMixin:
                 )
 
                 # Update progress bar to show chunk progress
-                progress = (i - 1) / total_chunks * 100
-                self.root.after(0, lambda p=progress: self.progress.configure(value=p))
+                progress = int((i - 1) / total_chunks * 100)
+                QTimer.singleShot(
+                    0, self.main_window, lambda p=progress: self.progress.setValue(p)
+                )
 
                 # Check cache for individual chunk (include voice config)
                 config_id = (
@@ -454,19 +469,20 @@ class TTSGuiGenerationMixin:
         self.log_status(f"  Average RTF ({model_type}): {avg_rtf:.3f}")
 
         # Setup follow-along word highlighting
-        self.root.after(
+        QTimer.singleShot(
             0,
+            self.main_window,
             lambda t=text, d=self.audio_duration, s=speed: self.setup_follow_along_for_audio(
                 t, d, s
             ),
         )
 
         # Enable playback controls
-        self.root.after(0, lambda: self.play_btn.config(state=tk.NORMAL))
-        self.root.after(0, lambda: self.save_btn.config(state=tk.NORMAL))
-        self.root.after(0, lambda: self.seek_scale.config(state=tk.NORMAL))
-        self.root.after(0, lambda: self.update_time_display(0.0))
-        self.root.after(0, lambda: self.update_performance_display())
+        self._ui_call(lambda: self.play_btn.setEnabled(True))
+        self._ui_call(lambda: self.save_btn.setEnabled(True))
+        self._ui_call(lambda: self.seek_slider.setEnabled(True))
+        self._ui_call(lambda: self.update_time_display(0.0))
+        self._ui_call(lambda: self.update_performance_display())
 
     def _generate_audio_for_text(self, text, model_type, speed, speaker_id):
         """Generate audio for a single piece of text"""
@@ -602,11 +618,6 @@ class TTSGuiGenerationMixin:
                     else:
                         self.log_status(f"    ⚠ Error in sub-chunk {i+1}: {error_msg}")
                     continue  # Skip this chunk and continue with others
-                except Exception as sub_e:
-                    self.log_status(
-                        f"    ⚠ Sub-chunk {i+1} failed: {str(sub_e)[:50]}..."
-                    )
-                    continue
 
             if not audio_chunks:
                 self.log_status("  ✗ All sub-chunks failed")
@@ -642,38 +653,39 @@ class TTSGuiGenerationMixin:
 
         # Setup follow-along word highlighting if text is provided
         if text:
-            self.root.after(
+            QTimer.singleShot(
                 0,
+                self.main_window,
                 lambda t=text, d=self.audio_duration, s=speed: self.setup_follow_along_for_audio(
                     t, d, s
                 ),
             )
 
         # Enable playback controls
-        self.root.after(0, lambda: self.play_btn.config(state=tk.NORMAL))
-        self.root.after(0, lambda: self.save_btn.config(state=tk.NORMAL))
-        self.root.after(0, lambda: self.seek_scale.config(state=tk.NORMAL))
-        self.root.after(0, lambda: self.update_time_display(0.0))
-        self.root.after(0, lambda: self.update_performance_display())
+        self._ui_call(lambda: self.play_btn.setEnabled(True))
+        self._ui_call(lambda: self.save_btn.setEnabled(True))
+        self._ui_call(lambda: self.seek_slider.setEnabled(True))
+        self._ui_call(lambda: self.update_time_display(0.0))
+        self._ui_call(lambda: self.update_performance_display())
 
     def generate_speech(self):
         """Start speech generation"""
         self.generation_cancelled = False
-        self.generate_btn.config(state=tk.DISABLED)
-        self.cancel_btn.grid()  # Show cancel button
+        self.generate_btn.setEnabled(False)
+        self.cancel_btn.show()  # Show cancel button
 
         # Log that we're using the new token-aware chunking system
         self.log_status("🔄 Using improved token-aware chunking system...")
 
         # Check if we need chunking to determine progress bar mode
-        raw_text = self.text_widget.get(1.0, tk.END).strip()
+        raw_text = self.text_widget.toPlainText().strip()
         if raw_text and self.text_processor.needs_chunking(raw_text):
             # Use determinate progress for chunked processing
-            self.progress.configure(mode="determinate", value=0, maximum=100)
+            self.progress.setRange(0, 100)
+            self.progress.setValue(0)
         else:
             # Use indeterminate progress for single chunk
-            self.progress.configure(mode="indeterminate")
-            self.progress.start()
+            self.progress.setRange(0, 0)  # Indeterminate mode in Qt
 
         # Run generation in separate thread
         self.generation_thread = threading.Thread(target=self.generate_speech_thread)
@@ -686,6 +698,6 @@ class TTSGuiGenerationMixin:
         self.log_status("🚫 Generation cancelled by user")
 
         # Reset UI state
-        self.root.after(0, lambda: self.generate_btn.config(state=tk.NORMAL))
-        self.root.after(0, lambda: self.cancel_btn.grid_remove())
-        self.root.after(0, lambda: self.progress.stop())
+        QTimer.singleShot(0, lambda: self.generate_btn.setEnabled(True))
+        QTimer.singleShot(0, lambda: self.cancel_btn.hide())
+        QTimer.singleShot(0, lambda: self.progress.setRange(0, 100))

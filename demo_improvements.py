@@ -41,7 +41,7 @@ def demo_text_processing():
         'normalize_whitespace': True,
         'normalize_punctuation': True,
         'remove_urls': True,
-        'remove_emails': True
+        'remove_word_dashes': True
     }
     
     clean_text = processor.preprocess_text(messy_text, options)

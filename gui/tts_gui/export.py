@@ -1,29 +1,33 @@
 #!/usr/bin/env python3
+"""
+Export functionality mixin for the TTS GUI using PySide6 (Qt).
+"""
 
 import os
 import shutil
 import re
-import tkinter as tk
-from tkinter import messagebox, filedialog
 
+from tts_gui.common import QMessageBox, QFileDialog
 from tts_gui.export_dialog import ExportOptionsDialog
 
 
 class TTSGuiExportMixin:
+    """Mixin class providing audio export functionality."""
+
     def save_audio(self):
         """Save audio to file - opens advanced export options dialog"""
         if self.audio_data is None or len(self.audio_data) == 0:
-            messagebox.showwarning(
-                "No Audio", "No audio to save. Generate speech first."
+            QMessageBox.warning(
+                self.main_window, "No Audio", "No audio to save. Generate speech first."
             )
             return
 
         # Get original text for chapter detection
-        original_text = self.text_widget.get(1.0, tk.END).strip()
+        original_text = self.text_widget.toPlainText().strip()
 
         # Show advanced export dialog
         dialog = ExportOptionsDialog(
-            self.root,
+            self.main_window,
             self.audio_exporter,
             self.audio_data,
             self.sample_rate,
@@ -44,20 +48,21 @@ class TTSGuiExportMixin:
 
         if split_mode == "none":
             # Single file export
-            file_path = filedialog.asksaveasfilename(
-                title="Save Audio As",
-                defaultextension=ext,
-                initialdir="audio_output",
-                filetypes=[(f"{fmt.upper()} files", f"*{ext}"), ("All files", "*.*")],
+            file_path, _ = QFileDialog.getSaveFileName(
+                self.main_window,
+                "Save Audio As",
+                f"audio_output/audio{ext}",
+                f"{fmt.upper()} files (*{ext});;All files (*.*)",
             )
 
             if file_path:
                 self._export_single_file(file_path, export_options)
         else:
             # Multiple file export - choose directory
-            output_dir = filedialog.askdirectory(
-                title="Select Output Directory for Split Files",
-                initialdir="audio_output",
+            output_dir = QFileDialog.getExistingDirectory(
+                self.main_window,
+                "Select Output Directory for Split Files",
+                "audio_output",
             )
 
             if output_dir:
@@ -89,16 +94,20 @@ class TTSGuiExportMixin:
                 file_size = os.path.getsize(output_path) / 1024  # KB
                 self.log_status(f"✓ {message}")
                 self.log_status(f"  File size: {file_size:.1f} KB")
-                messagebox.showinfo(
-                    "Export Complete", f"Audio exported successfully!\n\n{output_path}"
+                QMessageBox.information(
+                    self.main_window,
+                    "Export Complete",
+                    f"Audio exported successfully!\n\n{output_path}",
                 )
             else:
                 self.log_status(f"✗ Export failed: {message}")
-                messagebox.showerror("Export Failed", message)
+                QMessageBox.critical(self.main_window, "Export Failed", message)
 
         except Exception as e:
             self.log_status(f"✗ Export error: {str(e)}")
-            messagebox.showerror("Export Error", f"Failed to export audio:\n{str(e)}")
+            QMessageBox.critical(
+                self.main_window, "Export Error", f"Failed to export audio:\n{str(e)}"
+            )
 
     def _export_split_files(self, output_dir, options):
         """Export audio as multiple split files"""
@@ -212,30 +221,34 @@ class TTSGuiExportMixin:
             )
 
             if success_count > 0:
-                messagebox.showinfo(
+                QMessageBox.information(
+                    self.main_window,
                     "Export Complete",
                     f"Successfully exported {success_count} file(s) to:\n{output_dir}",
                 )
             else:
-                messagebox.showerror(
+                QMessageBox.critical(
+                    self.main_window,
                     "Export Failed",
                     "All exports failed. Check the status log for details.",
                 )
 
         except Exception as e:
             self.log_status(f"✗ Split export error: {str(e)}")
-            messagebox.showerror(
-                "Export Error", f"Failed to export split files:\n{str(e)}"
+            QMessageBox.critical(
+                self.main_window,
+                "Export Error",
+                f"Failed to export split files:\n{str(e)}",
             )
 
     def save_audio_quick(self):
         """Quick save to WAV (original simple export behavior)"""
         if self.current_audio_file and os.path.exists(self.current_audio_file):
-            file_path = filedialog.asksaveasfilename(
-                title="Quick Save as WAV",
-                defaultextension=".wav",
-                initialdir="audio_output",
-                filetypes=[("WAV files", "*.wav"), ("All files", "*.*")],
+            file_path, _ = QFileDialog.getSaveFileName(
+                self.main_window,
+                "Quick Save as WAV",
+                "audio_output/audio.wav",
+                "WAV files (*.wav);;All files (*.*)",
             )
 
             if file_path:
