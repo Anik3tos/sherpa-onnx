@@ -248,6 +248,7 @@ class TTSGuiGenerationMixin:
         self._ui_call(lambda: self.seek_slider.setEnabled(True))
         self._ui_call(lambda: self.update_time_display(0.0))
         self._ui_call(lambda: self.update_performance_display())
+        self._ui_call(self._maybe_autoplay)
 
     def _generate_chunked_speech(self, text, model_type, speed, speaker_id):
         """Generate speech for long text by splitting into chunks"""
@@ -537,6 +538,7 @@ class TTSGuiGenerationMixin:
         self._ui_call(lambda: self.seek_slider.setEnabled(True))
         self._ui_call(lambda: self.update_time_display(0.0))
         self._ui_call(lambda: self.update_performance_display())
+        self._ui_call(self._maybe_autoplay)
 
     def _generate_audio_for_text(self, text, model_type, speed, speaker_id):
         """Generate audio for a single piece of text"""
@@ -721,6 +723,17 @@ class TTSGuiGenerationMixin:
         self._ui_call(lambda: self.seek_slider.setEnabled(True))
         self._ui_call(lambda: self.update_time_display(0.0))
         self._ui_call(lambda: self.update_performance_display())
+        self._ui_call(self._maybe_autoplay)
+
+    def _maybe_autoplay(self):
+        """Auto-play after generation when requested (e.g., preview)."""
+        if not getattr(self, "auto_play_after_generation", False):
+            return
+        self.auto_play_after_generation = False
+        try:
+            self.play_audio()
+        except Exception:
+            pass
 
     def generate_speech(self):
         """Start speech generation"""
@@ -751,6 +764,7 @@ class TTSGuiGenerationMixin:
     def cancel_generation(self):
         """Cancel ongoing speech generation"""
         self.generation_cancelled = True
+        self.auto_play_after_generation = False
         self.log_status("🚫 Generation cancelled by user")
 
         # Reset UI state

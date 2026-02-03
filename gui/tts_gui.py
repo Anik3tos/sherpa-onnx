@@ -1613,6 +1613,7 @@ class TTSGui(
         # Generation control variables
         self.generation_cancelled = False
         self.generation_thread = None
+        self.auto_play_after_generation = False
 
         # Text processing options (using simple dict instead of tk.BooleanVar)
         self.text_options = {

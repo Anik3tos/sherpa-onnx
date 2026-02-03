@@ -238,6 +238,9 @@ class TTSGuiVoiceMixin:
         # Set sample text
         self.text_widget.setPlainText(sample_text)
 
+        # Auto-play after generation for preview
+        self.auto_play_after_generation = True
+
         # Generate speech
         self.generate_speech()
 
