@@ -100,6 +100,18 @@ class TTSGuiUiMixin:
         speed_row.addWidget(self.speed_value_label)
         voice_layout.addLayout(speed_row)
 
+        # GPU Acceleration Toggle
+        provider_row = QHBoxLayout()
+        self.gpu_checkbox = QCheckBox("🚀 Use GPU if available")
+        self.gpu_checkbox.setChecked(getattr(self, "use_gpu", False))
+        self.gpu_checkbox.stateChanged.connect(self.on_gpu_toggle)
+        self.provider_label = QLabel("Provider: CPU")
+        self.provider_label.setObjectName("timeLabel")
+        provider_row.addWidget(self.gpu_checkbox)
+        provider_row.addWidget(self.provider_label)
+        provider_row.addStretch()
+        voice_layout.addLayout(provider_row)
+
         main_layout.addWidget(voice_group)
 
         # === Text Input Frame ===
@@ -408,12 +420,23 @@ class TTSGuiUiMixin:
         main_layout.addWidget(status_group)
 
         # Progress Bar
+        progress_frame = QFrame()
+        progress_frame.setObjectName("cardFrame")
+        progress_layout = QHBoxLayout(progress_frame)
+        progress_layout.setContentsMargins(8, 8, 8, 8)
+        progress_icon = QLabel("⏳ Generation:")
+        self.progress_label = QLabel("Idle")
+        self.progress_label.setObjectName("timeLabel")
         self.progress = QProgressBar()
         self.progress.setMinimum(0)
         self.progress.setMaximum(0)  # Indeterminate
         self.progress.setTextVisible(False)
-        self.progress.hide()
-        main_layout.addWidget(self.progress)
+        progress_layout.addWidget(progress_icon)
+        progress_layout.addWidget(self.progress_label)
+        progress_layout.addWidget(self.progress, 1)
+        progress_frame.hide()
+        self.progress_frame = progress_frame
+        main_layout.addWidget(progress_frame)
 
         # Initial text stats update
         self.on_text_change()

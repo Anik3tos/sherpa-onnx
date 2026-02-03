@@ -83,6 +83,7 @@ from tts_gui.text import TTSGuiTextMixin
 from tts_gui.theme import TTSGuiThemeMixin
 from tts_gui.ui import TTSGuiUiMixin
 from tts_gui.voice import TTSGuiVoiceMixin
+from tts_gui.config import TTSGuiConfigMixin
 
 
 # ============================================================================
@@ -1529,6 +1530,7 @@ class TTSGui(
     TTSGuiShortcutsMixin,
     TTSGuiTextMixin,
     TTSGuiSSMLMixin,
+    TTSGuiConfigMixin,
     TTSGuiVoiceMixin,
     TTSGuiGenerationMixin,
     TTSGuiPlaybackMixin,
@@ -1634,14 +1636,30 @@ class TTSGui(
         self.follow_along_enabled = True
         self.generated_text_for_follow_along = ""
 
+        # Provider selection (GPU auto-detect)
+        self.available_onnx_providers = self.detect_available_providers()
+        self.use_gpu = bool(
+            {
+                "CUDAExecutionProvider",
+                "TensorrtExecutionProvider",
+                "CoreMLExecutionProvider",
+                "DmlExecutionProvider",
+            }
+            & set(self.available_onnx_providers)
+        )
+
         # Control variable values (accessed via properties in ui.py)
         self.speed_var = 1.0
         self.volume_var = 80
         self.playback_speed_var = 1.0
 
+        # Load persisted settings after defaults are established
+        self.load_config()
+
         # Setup theme and UI
         self.setup_theme()
         self.setup_ui()
+        self.update_provider_ui()
 
         # Setup keyboard shortcuts for power users
         self.setup_keyboard_shortcuts()
@@ -1649,6 +1667,7 @@ class TTSGui(
         # Check available voices and populate selections (after UI is ready)
         self.check_available_voices()
         self.populate_voice_selections()
+        self.apply_config_to_ui()
 
         # Start model preloading in background
         self.preload_models()

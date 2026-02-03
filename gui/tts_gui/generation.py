@@ -105,6 +105,8 @@ class TTSGuiGenerationMixin:
             self._ui_call(lambda: self.generate_btn.setEnabled(True))
             self._ui_call(lambda: self.cancel_btn.hide())
             self._ui_call(lambda: self.progress.setRange(0, 100))
+            self._ui_call(lambda: self.progress_frame.hide())
+            self._ui_call(lambda: self.progress_label.setText("Idle"))
 
     def _generate_single_speech(self, text, model_type, speed, speaker_id):
         """Generate speech for a single chunk of text"""
@@ -253,6 +255,24 @@ class TTSGuiGenerationMixin:
         chunks = self.text_processor.split_text_into_chunks(text, model_type)
         total_chunks = len(chunks)
 
+        QTimer.singleShot(
+            0,
+            self.main_window,
+            lambda t=total_chunks: self.progress.setRange(0, t),
+        )
+        QTimer.singleShot(
+            0,
+            self.main_window,
+            lambda t=total_chunks: self.progress.setValue(0),
+        )
+        QTimer.singleShot(
+            0,
+            self.main_window,
+            lambda t=total_chunks: self.progress_label.setText(
+                f"Chunks: 0/{t}"
+            ),
+        )
+
         self.log_status(
             f"📄 Split into {total_chunks} chunks for {model_type.upper()} model (token-aware chunking)"
         )
@@ -299,9 +319,17 @@ class TTSGuiGenerationMixin:
                 )
 
                 # Update progress bar to show chunk progress
-                progress = int((i - 1) / total_chunks * 100)
                 QTimer.singleShot(
-                    0, self.main_window, lambda p=progress: self.progress.setValue(p)
+                    0,
+                    self.main_window,
+                    lambda idx=i, t=total_chunks: self.progress_label.setText(
+                        f"Processing chunk {idx}/{t}"
+                    ),
+                )
+                QTimer.singleShot(
+                    0,
+                    self.main_window,
+                    lambda idx=i: self.progress.setValue(idx - 1),
                 )
 
                 # Check cache for individual chunk (include voice config)
@@ -368,6 +396,18 @@ class TTSGuiGenerationMixin:
                 audio_chunks.append(audio_data)
                 successful_chunks += 1
                 self.log_status(f"  ✓ Chunk {i} completed successfully")
+                QTimer.singleShot(
+                    0,
+                    self.main_window,
+                    lambda idx=i, t=total_chunks: self.progress_label.setText(
+                        f"Chunks: {idx}/{t}"
+                    ),
+                )
+                QTimer.singleShot(
+                    0,
+                    self.main_window,
+                    lambda idx=i: self.progress.setValue(idx),
+                )
 
             except Exception as e:
                 error_msg = str(e)
@@ -383,6 +423,18 @@ class TTSGuiGenerationMixin:
                         f"  ✗ Error processing chunk {i}: {error_msg[:100]}..."
                     )
                 self.log_status(f"  ⏭ Continuing with remaining chunks...")
+                QTimer.singleShot(
+                    0,
+                    self.main_window,
+                    lambda idx=i, t=total_chunks: self.progress_label.setText(
+                        f"Chunks: {idx}/{t}"
+                    ),
+                )
+                QTimer.singleShot(
+                    0,
+                    self.main_window,
+                    lambda idx=i: self.progress.setValue(idx),
+                )
                 continue
 
         if not audio_chunks:
@@ -414,6 +466,8 @@ class TTSGuiGenerationMixin:
 
         # Stitch chunks together
         self.log_status(f"🔗 Stitching {successful_chunks} audio chunks together...")
+        self._ui_call(lambda: self.progress.setRange(0, 0))
+        self._ui_call(lambda: self.progress_label.setText("Stitching audio..."))
 
         # Use the sample rate from the first successful generation or cached chunk
         if hasattr(self, "sample_rate"):
@@ -673,6 +727,7 @@ class TTSGuiGenerationMixin:
         self.generation_cancelled = False
         self.generate_btn.setEnabled(False)
         self.cancel_btn.show()  # Show cancel button
+        self.progress_frame.show()
 
         # Log that we're using the new token-aware chunking system
         self.log_status("🔄 Using improved token-aware chunking system...")
@@ -680,12 +735,13 @@ class TTSGuiGenerationMixin:
         # Check if we need chunking to determine progress bar mode
         raw_text = self.text_widget.toPlainText().strip()
         if raw_text and self.text_processor.needs_chunking(raw_text):
-            # Use determinate progress for chunked processing
-            self.progress.setRange(0, 100)
-            self.progress.setValue(0)
+            # Show indeterminate until chunk count is known
+            self.progress.setRange(0, 0)
+            self.progress_label.setText("Splitting text into chunks...")
         else:
             # Use indeterminate progress for single chunk
             self.progress.setRange(0, 0)  # Indeterminate mode in Qt
+            self.progress_label.setText("Generating speech...")
 
         # Run generation in separate thread
         self.generation_thread = threading.Thread(target=self.generate_speech_thread)
@@ -701,3 +757,5 @@ class TTSGuiGenerationMixin:
         QTimer.singleShot(0, lambda: self.generate_btn.setEnabled(True))
         QTimer.singleShot(0, lambda: self.cancel_btn.hide())
         QTimer.singleShot(0, lambda: self.progress.setRange(0, 100))
+        QTimer.singleShot(0, lambda: self.progress_frame.hide())
+        QTimer.singleShot(0, lambda: self.progress_label.setText("Idle"))

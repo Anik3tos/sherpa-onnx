@@ -9,6 +9,52 @@ from tts_gui.common import VOICE_CONFIGS, sherpa_onnx, os, threading, QMessageBo
 class TTSGuiVoiceMixin:
     """Mixin class providing voice model management functionality."""
 
+    def detect_available_providers(self):
+        """Detect available ONNX Runtime providers."""
+        try:
+            import onnxruntime as ort
+
+            return ort.get_available_providers()
+        except Exception:
+            return []
+
+    def get_provider(self):
+        """Resolve the provider string for sherpa-onnx based on settings."""
+        providers = getattr(self, "available_onnx_providers", [])
+        if getattr(self, "use_gpu", False):
+            if (
+                "CUDAExecutionProvider" in providers
+                or "TensorrtExecutionProvider" in providers
+            ):
+                return "cuda"
+            if "DmlExecutionProvider" in providers:
+                return "directml"
+            if "CoreMLExecutionProvider" in providers:
+                return "coreml"
+        return "cpu"
+
+    def update_provider_ui(self):
+        """Update provider status label and checkbox state."""
+        if not hasattr(self, "provider_label"):
+            return
+        provider = self.get_provider()
+        if getattr(self, "use_gpu", False) and provider == "cpu":
+            self.provider_label.setText("Provider: CPU (GPU unavailable)")
+        else:
+            self.provider_label.setText(f"Provider: {provider.upper()}")
+
+    def on_gpu_toggle(self, state):
+        """Handle GPU acceleration toggle."""
+        self.use_gpu = bool(state)
+        self.update_provider_ui()
+
+        # Clear loaded models so they reload with the new provider.
+        if self.tts_models:
+            self.tts_models.clear()
+            self.log_status("🔄 GPU setting changed - reloading models on next use")
+        if self.use_gpu and self.get_provider() == "cpu":
+            self.log_status("⚠ GPU requested but not available - using CPU")
+
     def _find_matcha_vocoder(self, model_files):
         """Try to locate a matcha vocoder file if the configured path is missing."""
         acoustic_model = model_files.get("acoustic_model", "")
@@ -269,7 +315,7 @@ class TTSGuiVoiceMixin:
                         ),
                         num_threads=2,
                         debug=False,
-                        provider="cpu",
+                        provider=self.get_provider(),
                     ),
                     max_num_sentences=1,
                 )
@@ -299,7 +345,7 @@ class TTSGuiVoiceMixin:
                             ),
                             num_threads=2,
                             debug=False,
-                            provider="cpu",
+                            provider=self.get_provider(),
                         ),
                         max_num_sentences=1,
                     )
@@ -320,7 +366,7 @@ class TTSGuiVoiceMixin:
                                 ),
                                 num_threads=2,
                                 debug=False,
-                                provider="cpu",
+                                provider=self.get_provider(),
                             ),
                             max_num_sentences=1,
                         )
@@ -342,7 +388,7 @@ class TTSGuiVoiceMixin:
                         ),
                         num_threads=2,
                         debug=False,
-                        provider="cpu",
+                        provider=self.get_provider(),
                     ),
                     max_num_sentences=1,
                 )

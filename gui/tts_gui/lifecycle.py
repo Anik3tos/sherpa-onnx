@@ -16,6 +16,8 @@ class TTSGuiLifecycleMixin:
             return
         self._cleanup_done = True
         try:
+            if hasattr(self, "save_config"):
+                self.save_config()
             # Save audio cache
             self.audio_cache.save_cache()
 
