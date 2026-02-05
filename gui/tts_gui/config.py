@@ -7,12 +7,37 @@ import json
 import os
 from pathlib import Path
 
+from tts_gui.common import QTimer
+
 
 class TTSGuiConfigMixin:
     """Mixin class providing configuration persistence."""
 
     def get_config_path(self):
         return Path.home() / ".sherpa-tts-gui.conf"
+
+    def _get_config_save_timer(self):
+        timer = getattr(self, "_config_save_timer", None)
+        if timer is None:
+            parent = self.main_window if hasattr(self, "main_window") else None
+            timer = QTimer(parent)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self.save_config)
+            self._config_save_timer = timer
+        return timer
+
+    def schedule_config_save(self, delay_ms=500):
+        """Debounce config writes so rapid UI changes don't thrash disk."""
+        try:
+            timer = self._get_config_save_timer()
+            if timer.isActive():
+                timer.stop()
+            timer.start(int(delay_ms))
+        except Exception:
+            try:
+                self.save_config()
+            except Exception:
+                pass
 
     def load_config(self):
         """Load configuration from disk and apply to runtime defaults."""

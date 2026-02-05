@@ -20,7 +20,7 @@ class TTSGuiTextMixin:
         prev_line = None
         duplicates_removed = 0
         garbage_removed = 0
-        garbage_tokens = {"copy", "explain"}
+        garbage_tokens = {"copy", "explain", "copyexplain"}
 
         for line in lines:
             stripped = line.strip()

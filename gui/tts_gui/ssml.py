@@ -35,6 +35,8 @@ class TTSGuiSSMLMixin:
                 "SSML enables: <emphasis>, <break>, <prosody>, <say-as>, and more"
             )
             self.ssml_info_label.setStyleSheet(f"color: {self.colors['accent_cyan']};")
+        if hasattr(self, "schedule_config_save"):
+            self.schedule_config_save()
 
     def show_ssml_templates(self):
         """Show SSML templates in a dialog"""

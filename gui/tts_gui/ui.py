@@ -184,6 +184,7 @@ class TTSGuiUiMixin:
 
         self.ssml_auto_detect_cb = QCheckBox("Auto-detect SSML markup")
         self.ssml_auto_detect_cb.setChecked(True)
+        self.ssml_auto_detect_cb.stateChanged.connect(self._on_user_setting_changed)
 
         self.ssml_templates_btn = QPushButton("📋 SSML Templates")
         self.ssml_templates_btn.clicked.connect(self.show_ssml_templates)
@@ -364,6 +365,7 @@ class TTSGuiUiMixin:
 
         self.follow_along_cb = QCheckBox("📖 Follow Along (highlight current word)")
         self.follow_along_cb.setChecked(True)
+        self.follow_along_cb.stateChanged.connect(self._on_user_setting_changed)
 
         current_label = QLabel("Current:")
         self.follow_along_word_label = QLabel("---")
@@ -444,6 +446,12 @@ class TTSGuiUiMixin:
     def _update_text_option(self, key, state):
         """Update text processing option."""
         self.text_options[key] = bool(state)
+        self._on_user_setting_changed()
+
+    def _on_user_setting_changed(self, *_args):
+        """Schedule settings persistence for UI-driven changes."""
+        if hasattr(self, "schedule_config_save"):
+            self.schedule_config_save()
 
     @property
     def speed_var(self):
@@ -547,17 +555,20 @@ class TTSGuiUiMixin:
         """Update speed label when slider changes."""
         speed = value / 100.0
         self.speed_value_label.setText(f"{speed:.1f}x")
+        self._on_user_setting_changed()
 
     def update_playback_speed_label(self, value):
         """Update playback speed label when slider changes."""
         speed = value / 100.0
         self.playback_speed_label.setText(f"{speed:.1f}x")
+        self._on_user_setting_changed()
 
     def update_volume_label(self, value):
         """Update volume label when slider changes."""
         self.volume_label.setText(f"{value}%")
         if self.current_sound and self.is_playing:
             self.current_sound.set_volume(value / 100.0)
+        self._on_user_setting_changed()
 
     def update_performance_display(self):
         """Update performance information display."""

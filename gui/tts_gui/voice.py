@@ -47,6 +47,8 @@ class TTSGuiVoiceMixin:
         """Handle GPU acceleration toggle."""
         self.use_gpu = bool(state)
         self.update_provider_ui()
+        if hasattr(self, "schedule_config_save"):
+            self.schedule_config_save()
 
         # Clear loaded models so they reload with the new provider.
         if self.tts_models:
@@ -196,6 +198,8 @@ class TTSGuiVoiceMixin:
         # Update model info
         info_text = f"{config['description']} | Quality: {config['quality'].replace('_', ' ').title()}"
         self.voice_info_label.setText(info_text)
+        if hasattr(self, "schedule_config_save"):
+            self.schedule_config_save()
 
     def on_speaker_changed(self, index):
         """Handle speaker selection change."""
@@ -216,6 +220,8 @@ class TTSGuiVoiceMixin:
                 f"Quality: {config['quality'].replace('_', ' ').title()}"
             )
             self.voice_info_label.setText(info_text)
+        if hasattr(self, "schedule_config_save"):
+            self.schedule_config_save()
 
     def preview_voice(self):
         """Preview the selected voice with sample text."""
