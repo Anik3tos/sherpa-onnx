@@ -960,6 +960,69 @@ class TextProcessor:
         self.max_chunk_size = 9500
         self.model_token_limits = {"matcha": 700, "kokoro": 1100}
         self.chars_per_token = 3.5
+        self._abbreviation_map = {
+            "mr": "mister",
+            "mrs": "missus",
+            "ms": "miss",
+            "dr": "doctor",
+            "prof": "professor",
+            "sr": "senior",
+            "jr": "junior",
+            "dept": "department",
+            "univ": "university",
+            "ave": "avenue",
+            "rd": "road",
+            "blvd": "boulevard",
+            "st": "street",
+            "mt": "mount",
+            "no": "number",
+            "vs": "versus",
+            "etc": "et cetera",
+        }
+        self._small_numbers = {
+            0: "zero",
+            1: "one",
+            2: "two",
+            3: "three",
+            4: "four",
+            5: "five",
+            6: "six",
+            7: "seven",
+            8: "eight",
+            9: "nine",
+            10: "ten",
+            11: "eleven",
+            12: "twelve",
+            13: "thirteen",
+            14: "fourteen",
+            15: "fifteen",
+            16: "sixteen",
+            17: "seventeen",
+            18: "eighteen",
+            19: "nineteen",
+        }
+        self._tens_numbers = {
+            20: "twenty",
+            30: "thirty",
+            40: "forty",
+            50: "fifty",
+            60: "sixty",
+            70: "seventy",
+            80: "eighty",
+            90: "ninety",
+        }
+        self._digit_words = {
+            "0": "zero",
+            "1": "one",
+            "2": "two",
+            "3": "three",
+            "4": "four",
+            "5": "five",
+            "6": "six",
+            "7": "seven",
+            "8": "eight",
+            "9": "nine",
+        }
 
     def validate_text(self, text):
         if not text or not text.strip():
@@ -1029,15 +1092,6 @@ class TextProcessor:
                 processed = processed.replace(corrupt, fixed)
             processed = re.sub(r'[^\w\s\.,!?;:\'"()-]', " ", processed)
 
-        if options.get("normalize_whitespace", True):
-            processed = re.sub(r"\s+", " ", processed)
-            processed = processed.strip()
-
-        if options.get("normalize_punctuation", True):
-            processed = re.sub(r"[.]{2,}", "...", processed)
-            processed = re.sub(r"[!]{2,}", "!", processed)
-            processed = re.sub(r"[?]{2,}", "?", processed)
-
         if options.get("remove_urls", False):
             processed = re.sub(
                 r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+",
@@ -1045,10 +1099,160 @@ class TextProcessor:
                 processed,
             )
 
+        if options.get("remove_duplicates", False):
+            processed = self._remove_duplicate_lines(processed)
+
+        if options.get("expand_abbreviations", False):
+            processed = self._expand_abbreviations(processed)
+
+        if options.get("numbers_to_words", False):
+            processed = self._expand_numbers(processed)
+
         if options.get("remove_word_dashes", False):
             processed = re.sub(r"\b([A-Za-z]+)-([A-Za-z]+)\b", r"\1 \2", processed)
 
+        if options.get("handle_acronyms", False):
+            # Expand acronyms such as NASA or U.S.A. into space-separated letters.
+            processed = re.sub(
+                r"\b(?:[A-Z]\.){2,}",
+                lambda m: " ".join(ch for ch in m.group(0) if ch.isalpha()),
+                processed,
+            )
+            processed = re.sub(
+                r"\b[A-Z]{2,}\b",
+                lambda m: " ".join(m.group(0)),
+                processed,
+            )
+
+        if options.get("add_pauses", False):
+            processed = self._add_natural_pauses(processed)
+
+        if options.get("normalize_punctuation", True):
+            processed = re.sub(r"[.]{2,}", "...", processed)
+            processed = re.sub(r"[!]{2,}", "!", processed)
+            processed = re.sub(r"[?]{2,}", "?", processed)
+
+        if options.get("normalize_whitespace", True):
+            processed = re.sub(r"\s+", " ", processed)
+            processed = processed.strip()
+
         return processed
+
+    def _remove_duplicate_lines(self, text):
+        lines = text.splitlines()
+        if len(lines) <= 1:
+            return text
+
+        deduplicated = []
+        previous_non_empty = None
+        for line in lines:
+            stripped = line.strip()
+            if stripped and stripped == previous_non_empty:
+                continue
+            deduplicated.append(line)
+            previous_non_empty = stripped
+
+        return "\n".join(deduplicated)
+
+    def _expand_abbreviations(self, text):
+        text = re.sub(r"\be\.g\.(?=\s|$)", "for example", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bi\.e\.(?=\s|$)", "that is", text, flags=re.IGNORECASE)
+
+        pattern = re.compile(
+            r"\b("
+            + "|".join(sorted(self._abbreviation_map.keys(), key=len, reverse=True))
+            + r")\.(?=\s|$)",
+            flags=re.IGNORECASE,
+        )
+
+        def replace(match):
+            token = match.group(1)
+            replacement = self._abbreviation_map.get(token.lower(), token)
+            return self._match_word_case(token, replacement)
+
+        return pattern.sub(replace, text)
+
+    def _match_word_case(self, source, replacement):
+        if not source:
+            return replacement
+        if source.isupper():
+            return replacement.upper()
+        if source.islower():
+            return replacement
+        if source[0].isupper():
+            return replacement.capitalize()
+        return replacement
+
+    def _expand_numbers(self, text):
+        number_pattern = re.compile(r"\b\d[\d,]*(?:\.\d+)?\b")
+        return number_pattern.sub(self._replace_number_token, text)
+
+    def _replace_number_token(self, match):
+        token = match.group(0)
+        normalized = token.replace(",", "")
+        try:
+            if "." in normalized:
+                whole, fractional = normalized.split(".", 1)
+                whole_part = int(whole) if whole else 0
+                whole_words = self._int_to_words(whole_part)
+                if not fractional:
+                    return whole_words
+                fractional_words = " ".join(
+                    self._digit_words.get(d, d) for d in fractional
+                )
+                return f"{whole_words} point {fractional_words}".strip()
+
+            if len(normalized) > 1 and normalized.startswith("0"):
+                return " ".join(self._digit_words.get(d, d) for d in normalized)
+
+            return self._int_to_words(int(normalized))
+        except Exception:
+            return token
+
+    def _int_to_words(self, number):
+        if number < 0:
+            return "minus " + self._int_to_words(abs(number))
+        if number < 20:
+            return self._small_numbers[number]
+        if number < 100:
+            tens = (number // 10) * 10
+            remainder = number % 10
+            if remainder == 0:
+                return self._tens_numbers[tens]
+            return f"{self._tens_numbers[tens]} {self._small_numbers[remainder]}"
+        if number < 1000:
+            hundreds = number // 100
+            remainder = number % 100
+            if remainder == 0:
+                return f"{self._small_numbers[hundreds]} hundred"
+            return (
+                f"{self._small_numbers[hundreds]} hundred {self._int_to_words(remainder)}"
+            )
+
+        scales = [
+            (1_000_000_000_000, "trillion"),
+            (1_000_000_000, "billion"),
+            (1_000_000, "million"),
+            (1_000, "thousand"),
+        ]
+        for scale_value, scale_name in scales:
+            if number >= scale_value:
+                major = number // scale_value
+                remainder = number % scale_value
+                major_words = self._int_to_words(major)
+                if remainder == 0:
+                    return f"{major_words} {scale_name}"
+                return f"{major_words} {scale_name} {self._int_to_words(remainder)}"
+        return str(number)
+
+    def _add_natural_pauses(self, text):
+        # Turn line breaks into sentence boundaries unless punctuation already exists.
+        text = re.sub(r"([^\s.!?])\s*\n+\s*", r"\1. ", text)
+        text = re.sub(r"\n+", " ", text)
+        text = re.sub(r"\s*--+\s*", ", ", text)
+        text = re.sub(r"\s*[-–—]\s*", ", ", text)
+        text = re.sub(r"([,;:])(?=\S)", r"\1 ", text)
+        return text
 
     def get_text_stats(self, text):
         if not text:
