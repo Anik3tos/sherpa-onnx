@@ -54,6 +54,9 @@ class TTSGuiVoiceMixin:
         if self.tts_models:
             self.tts_models.clear()
             self.log_status("🔄 GPU setting changed - reloading models on next use")
+        if getattr(self, "asr_models", None):
+            self.asr_models.clear()
+            self.log_status("🔄 ASR models will reload with updated provider")
         if self.use_gpu and self.get_provider() == "cpu":
             self.log_status("⚠ GPU requested but not available - using CPU")
 

@@ -25,6 +25,10 @@ class TTSGuiLifecycleMixin:
             if self.current_sound:
                 self.current_sound.stop()
 
+            # Request cancellation for in-flight transcription/download
+            if getattr(self, "transcription_in_progress", False):
+                self.transcription_cancelled = True
+
             # Shutdown thread pool
             self.thread_pool.shutdown(wait=False)
 

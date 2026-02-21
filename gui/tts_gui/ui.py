@@ -136,6 +136,53 @@ class TTSGuiUiMixin:
         text_controls.addStretch()
         text_layout.addLayout(text_controls)
 
+        # Audio-to-Text Controls
+        transcription_group = QGroupBox("🎙️ Audio to Text (Upload + Transcribe)")
+        transcription_layout = QGridLayout(transcription_group)
+        transcription_layout.setSpacing(10)
+
+        asr_model_label = QLabel("🧠 ASR Model:")
+        self.asr_model_combo = QComboBox()
+        self.asr_model_combo.setMinimumWidth(320)
+        self.asr_model_combo.currentIndexChanged.connect(self.on_asr_model_changed)
+
+        self.upload_audio_btn = QPushButton("📂 Upload Audio")
+        self.upload_audio_btn.setObjectName("utilityButton")
+        self.upload_audio_btn.clicked.connect(self.upload_audio_file)
+
+        self.transcribe_btn = QPushButton("📝 Transcribe Audio")
+        self.transcribe_btn.setObjectName("primaryButton")
+        self.transcribe_btn.clicked.connect(self.start_transcription)
+        self.transcribe_btn.setEnabled(False)
+
+        self.transcription_replace_cb = QCheckBox("Replace editor text with transcript")
+        self.transcription_replace_cb.setChecked(
+            getattr(self, "transcription_replace_text", True)
+        )
+        self.transcription_replace_cb.stateChanged.connect(
+            self._on_user_setting_changed
+        )
+
+        self.audio_file_label = QLabel("No audio selected")
+        self.audio_file_label.setObjectName("timeLabel")
+
+        self.asr_model_info_label = QLabel("Select a model and upload audio to start.")
+        self.asr_model_info_label.setObjectName("timeLabel")
+        self.asr_model_info_label.setWordWrap(True)
+
+        transcription_layout.addWidget(asr_model_label, 0, 0)
+        transcription_layout.addWidget(self.asr_model_combo, 0, 1, 1, 2)
+        transcription_layout.addWidget(self.upload_audio_btn, 1, 0)
+        transcription_layout.addWidget(self.transcribe_btn, 1, 1)
+        transcription_layout.addWidget(self.transcription_replace_cb, 1, 2)
+        transcription_layout.addWidget(self.audio_file_label, 2, 0, 1, 3)
+        transcription_layout.addWidget(self.asr_model_info_label, 3, 0, 1, 3)
+
+        text_layout.addWidget(transcription_group)
+
+        if hasattr(self, "populate_asr_models"):
+            self.populate_asr_models()
+
         # Text Processing Options
         preprocess_group = QGroupBox("🔧 Text Processing Options")
         preprocess_layout = QGridLayout(preprocess_group)
@@ -426,7 +473,7 @@ class TTSGuiUiMixin:
         progress_frame.setObjectName("cardFrame")
         progress_layout = QHBoxLayout(progress_frame)
         progress_layout.setContentsMargins(8, 8, 8, 8)
-        progress_icon = QLabel("⏳ Generation:")
+        progress_icon = QLabel("⏳ Task:")
         self.progress_label = QLabel("Idle")
         self.progress_label.setObjectName("timeLabel")
         self.progress = QProgressBar()

@@ -763,6 +763,10 @@ class TTSGuiGenerationMixin:
 
     def cancel_generation(self):
         """Cancel ongoing speech generation"""
+        if getattr(self, "transcription_in_progress", False):
+            self.cancel_transcription()
+            return
+
         self.generation_cancelled = True
         self.auto_play_after_generation = False
         self.log_status("🚫 Generation cancelled by user")

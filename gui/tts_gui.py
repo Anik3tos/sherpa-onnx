@@ -80,6 +80,7 @@ from tts_gui.playback import TTSGuiPlaybackMixin
 from tts_gui.shortcuts import TTSGuiShortcutsMixin
 from tts_gui.ssml import TTSGuiSSMLMixin
 from tts_gui.text import TTSGuiTextMixin
+from tts_gui.transcription import TTSGuiTranscriptionMixin
 from tts_gui.theme import TTSGuiThemeMixin
 from tts_gui.ui import TTSGuiUiMixin
 from tts_gui.voice import TTSGuiVoiceMixin
@@ -1733,6 +1734,7 @@ class TTSGui(
     TTSGuiUiMixin,
     TTSGuiShortcutsMixin,
     TTSGuiTextMixin,
+    TTSGuiTranscriptionMixin,
     TTSGuiSSMLMixin,
     TTSGuiConfigMixin,
     TTSGuiVoiceMixin,
@@ -1840,6 +1842,15 @@ class TTSGui(
         # Follow-along word highlighting
         self.follow_along_enabled = True
         self.generated_text_for_follow_along = ""
+
+        # Audio transcription state
+        self.asr_models = {}
+        self.selected_asr_model_id = None
+        self.selected_audio_file = ""
+        self.transcription_replace_text = True
+        self.transcription_in_progress = False
+        self.transcription_cancelled = False
+        self.transcription_thread = None
 
         # Provider selection (GPU auto-detect)
         self.available_onnx_providers = self.detect_available_providers()

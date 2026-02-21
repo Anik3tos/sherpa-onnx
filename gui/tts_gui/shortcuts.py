@@ -30,6 +30,7 @@ class TTSGuiShortcutsMixin:
             Space         - Play/Pause audio
             Ctrl+Enter    - Generate speech
             Ctrl+G        - Generate speech (alternative)
+            Ctrl+Shift+T  - Transcribe selected audio
             1, 2, 3       - Speed presets (0.75x, 1.0x, 1.5x) when not in text
             4, 5          - Speed presets (2.0x, 0.5x) when not in text
             Alt+Up        - Previous voice model
@@ -67,6 +68,13 @@ class TTSGuiShortcutsMixin:
         shortcut_generate_g = QShortcut(QKeySequence("Ctrl+G"), self.main_window)
         shortcut_generate_g.activated.connect(self._on_ctrl_enter)
         self._shortcuts.append(shortcut_generate_g)
+
+        # Ctrl+Shift+T - Transcribe selected audio
+        shortcut_transcribe = QShortcut(
+            QKeySequence("Ctrl+Shift+T"), self.main_window
+        )
+        shortcut_transcribe.activated.connect(self._on_ctrl_shift_t)
+        self._shortcuts.append(shortcut_transcribe)
 
         # Number keys for speed presets
         shortcut_1 = QShortcut(QKeySequence("1"), self.main_window)
@@ -141,6 +149,11 @@ class TTSGuiShortcutsMixin:
         if self.generate_btn.isEnabled():
             self.generate_speech()
 
+    def _on_ctrl_shift_t(self):
+        """Handle Ctrl+Shift+T for audio transcription."""
+        if hasattr(self, "start_transcription"):
+            self.start_transcription()
+
     def _apply_speed_preset(self, speed):
         """Apply a speed preset if not in text widget."""
         # Check if focus is in the text widget
@@ -206,7 +219,9 @@ class TTSGuiShortcutsMixin:
 
     def _on_escape(self):
         """Handle Escape key - cancel generation or stop playback."""
-        if self.generation_thread and self.generation_thread.is_alive():
+        if getattr(self, "transcription_in_progress", False):
+            self.cancel_transcription()
+        elif self.generation_thread and self.generation_thread.is_alive():
             self.cancel_generation()
         elif self.is_playing:
             self.stop_audio()
@@ -263,6 +278,7 @@ class TTSGuiShortcutsMixin:
                 [
                     ("Ctrl+Enter", "Generate speech"),
                     ("Ctrl+G", "Generate speech (alternative)"),
+                    ("Ctrl+Shift+T", "Transcribe selected audio"),
                     ("Escape", "Cancel generation (during processing)"),
                 ],
             ),

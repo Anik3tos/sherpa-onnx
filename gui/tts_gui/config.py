@@ -71,6 +71,13 @@ class TTSGuiConfigMixin:
 
         self._preferred_voice_config_id = settings.get("voice_config_id")
         self._preferred_speaker_id = settings.get("speaker_id")
+        self._preferred_asr_model_id = settings.get("asr_model_id")
+        self.transcription_replace_text = bool(
+            settings.get(
+                "transcription_replace_text",
+                getattr(self, "transcription_replace_text", True),
+            )
+        )
 
         if "speed_var" in settings:
             self.speed_var = float(settings.get("speed_var", self.speed_var))
@@ -121,6 +128,21 @@ class TTSGuiConfigMixin:
             if speaker_index >= 0:
                 self.speaker_combo.setCurrentIndex(speaker_index)
 
+        preferred_asr_model_id = getattr(self, "_preferred_asr_model_id", None)
+        if hasattr(self, "asr_model_combo") and preferred_asr_model_id:
+            asr_index = -1
+            for i in range(self.asr_model_combo.count()):
+                if self.asr_model_combo.itemData(i) == preferred_asr_model_id:
+                    asr_index = i
+                    break
+            if asr_index >= 0:
+                self.asr_model_combo.setCurrentIndex(asr_index)
+
+        if hasattr(self, "transcription_replace_cb"):
+            self.transcription_replace_cb.setChecked(
+                bool(getattr(self, "transcription_replace_text", True))
+            )
+
     def save_config(self):
         """Persist current settings to disk."""
         path = self.get_config_path()
@@ -147,6 +169,23 @@ class TTSGuiConfigMixin:
             settings["speaker_id"] = speaker_id
         elif getattr(self, "_preferred_speaker_id", None) is not None:
             settings["speaker_id"] = self._preferred_speaker_id
+
+        if hasattr(self, "asr_model_combo") and self.asr_model_combo.count() > 0:
+            asr_model_id = self.asr_model_combo.itemData(
+                self.asr_model_combo.currentIndex()
+            )
+            settings["asr_model_id"] = asr_model_id
+        elif getattr(self, "_preferred_asr_model_id", None):
+            settings["asr_model_id"] = self._preferred_asr_model_id
+
+        if hasattr(self, "transcription_replace_cb"):
+            settings["transcription_replace_text"] = bool(
+                self.transcription_replace_cb.isChecked()
+            )
+        else:
+            settings["transcription_replace_text"] = bool(
+                getattr(self, "transcription_replace_text", True)
+            )
 
         payload = {
             "version": 1,
