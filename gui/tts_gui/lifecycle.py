@@ -4,7 +4,7 @@ Lifecycle management mixin for the TTS GUI using PySide6 (Qt).
 """
 
 import os
-import pygame
+from tts_gui.audio_backend import pygame
 
 
 class TTSGuiLifecycleMixin:
@@ -40,8 +40,14 @@ class TTSGuiLifecycleMixin:
                 except:
                     pass
 
+            if getattr(self, "audio_backend_name", "none") == "qt" and getattr(
+                self, "qt_media_player", None
+            ):
+                self.qt_media_player.stop()
+
             # Quit pygame
-            pygame.mixer.quit()
+            if getattr(self, "audio_backend_name", "none") == "pygame":
+                pygame.mixer.quit()
 
         except Exception:
             pass  # Ignore cleanup errors

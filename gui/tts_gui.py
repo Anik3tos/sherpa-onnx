@@ -23,6 +23,11 @@ from xml.etree.ElementTree import ParseError
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+# Always run relative to the repository root so bundled model paths resolve
+# correctly, even when the script is launched from another working directory.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+os.chdir(REPO_ROOT)
+
 try:
     import numpy as np
 except Exception:
@@ -66,7 +71,6 @@ except Exception:
 
     np = _NumpyStub()
 
-import pygame
 import sherpa_onnx
 import soundfile as sf
 
@@ -85,6 +89,15 @@ from tts_gui.theme import TTSGuiThemeMixin
 from tts_gui.ui import TTSGuiUiMixin
 from tts_gui.voice import TTSGuiVoiceMixin
 from tts_gui.config import TTSGuiConfigMixin
+from tts_gui.audio_backend import (
+    pygame,
+    PYGAME_AVAILABLE,
+    PYGAME_IMPORT_ERROR,
+    QAudioOutput,
+    QMediaPlayer,
+    QT_AUDIO_AVAILABLE,
+    QT_AUDIO_IMPORT_ERROR,
+)
 
 
 # ============================================================================
@@ -959,7 +972,12 @@ class TextProcessor:
         self.min_length = 1
         self.chunk_size = 8000
         self.max_chunk_size = 9500
-        self.model_token_limits = {"matcha": 700, "kokoro": 1100}
+        self.model_token_limits = {
+            "matcha": 700,
+            "vits": 800,
+            "kokoro": 1100,
+            "kitten": 1100,
+        }
         self.chars_per_token = 3.5
         self._abbreviation_map = {
             "mr": "mister",
@@ -1781,8 +1799,35 @@ class TTSGui(
             "border_light": "#bd93f9",
         }
 
-        # Initialize pygame mixer for audio playback
-        pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=1024)
+        self.audio_playback_available = False
+        self.audio_backend_name = "none"
+        self._pending_audio_status = None
+        self.qt_audio_output = None
+        self.qt_media_player = None
+
+        # Prefer pygame when available and fall back to Qt multimedia.
+        if PYGAME_AVAILABLE:
+            try:
+                pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=1024)
+                self.audio_playback_available = True
+                self.audio_backend_name = "pygame"
+            except Exception as e:
+                self._pending_audio_status = f"⚠ Pygame playback unavailable: {e}"
+        if not self.audio_playback_available and QT_AUDIO_AVAILABLE:
+            try:
+                self.qt_audio_output = QAudioOutput(self)
+                self.qt_media_player = QMediaPlayer(self)
+                self.qt_media_player.setAudioOutput(self.qt_audio_output)
+                self.audio_playback_available = True
+                self.audio_backend_name = "qt"
+                self._pending_audio_status = "✓ Audio playback enabled with Qt multimedia"
+            except Exception as e:
+                self._pending_audio_status = f"⚠ Qt audio playback unavailable: {e}"
+        else:
+            if not self.audio_playback_available and not self._pending_audio_status:
+                self._pending_audio_status = (
+                    "⚠ Audio playback disabled: neither pygame nor Qt multimedia could be initialized"
+                )
 
         # Initialize helper components
         self.text_processor = TextProcessor()
@@ -1875,6 +1920,24 @@ class TTSGui(
         # Setup theme and UI
         self.setup_theme()
         self.setup_ui()
+
+        if not self.audio_playback_available:
+            playback_msg = (
+                "Audio playback is unavailable because neither pygame nor Qt multimedia could be initialized."
+            )
+            self.preview_btn.setEnabled(False)
+            self.preview_btn.setToolTip(playback_msg)
+            self.play_btn.setEnabled(False)
+            self.play_btn.setToolTip(playback_msg)
+            self.stop_btn.setEnabled(False)
+            self.stop_btn.setToolTip(playback_msg)
+            self.seek_slider.setEnabled(False)
+            self.seek_slider.setToolTip(playback_msg)
+            self.playback_speed_slider.setEnabled(False)
+            self.playback_speed_slider.setToolTip(playback_msg)
+
+        if self._pending_audio_status:
+            self.log_status(self._pending_audio_status)
         self.update_provider_ui()
 
         # Setup keyboard shortcuts for power users
@@ -1900,12 +1963,11 @@ def main():
     # Check if required packages are available
     try:
         import sherpa_onnx
-        import pygame
         import soundfile
     except ImportError as e:
         print(f"Required package missing: {e}")
         print("Please install required packages:")
-        print("pip install sherpa-onnx pygame soundfile PySide6")
+        print("pip install sherpa-onnx soundfile PySide6")
         return
 
     app = QApplication(sys.argv)
@@ -1916,6 +1978,12 @@ def main():
 
     window = TTSGui()
     window.show()
+
+    if not PYGAME_AVAILABLE and not QT_AUDIO_AVAILABLE:
+        print(
+            "Audio playback is disabled because neither pygame nor Qt multimedia "
+            f"are available (pygame: {PYGAME_IMPORT_ERROR}; qt: {QT_AUDIO_IMPORT_ERROR})."
+        )
 
     try:
         sys.exit(app.exec())

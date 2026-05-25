@@ -3,12 +3,11 @@
 Speech generation mixin for the TTS GUI using PySide6 (Qt).
 """
 
-import pygame
-import time
-import uuid
 import os
+import time
 import threading
-import hashlib
+import uuid
+
 import numpy as np
 import soundfile as sf
 
@@ -154,9 +153,13 @@ class TTSGuiGenerationMixin:
             )
 
             # Enable playback controls
-            self._ui_call(lambda: self.play_btn.setEnabled(True))
+            self._ui_call(
+                lambda: self.play_btn.setEnabled(self.audio_playback_available)
+            )
             self._ui_call(lambda: self.save_btn.setEnabled(True))
-            self._ui_call(lambda: self.seek_slider.setEnabled(True))
+            self._ui_call(
+                lambda: self.seek_slider.setEnabled(self.audio_playback_available)
+            )
             self._ui_call(lambda: self.update_time_display(0.0))
             self._ui_call(lambda: self.update_performance_display())
             return
@@ -171,8 +174,8 @@ class TTSGuiGenerationMixin:
         self.log_status(f"🎵 Generating speech with {model_type.upper()} model...")
 
         # Stop any playing audio and cleanup
-        if pygame.mixer.music.get_busy():
-            pygame.mixer.music.stop()
+        if getattr(self, "is_playing", False):
+            self.stop_audio()
             time.sleep(0.1)
 
         # Ensure audio output directory exists
@@ -243,9 +246,13 @@ class TTSGuiGenerationMixin:
         )
 
         # Enable playback buttons and controls
-        self._ui_call(lambda: self.play_btn.setEnabled(True))
+        self._ui_call(
+            lambda: self.play_btn.setEnabled(self.audio_playback_available)
+        )
         self._ui_call(lambda: self.save_btn.setEnabled(True))
-        self._ui_call(lambda: self.seek_slider.setEnabled(True))
+        self._ui_call(
+            lambda: self.seek_slider.setEnabled(self.audio_playback_available)
+        )
         self._ui_call(lambda: self.update_time_display(0.0))
         self._ui_call(lambda: self.update_performance_display())
         self._ui_call(self._maybe_autoplay)
@@ -533,9 +540,13 @@ class TTSGuiGenerationMixin:
         )
 
         # Enable playback controls
-        self._ui_call(lambda: self.play_btn.setEnabled(True))
+        self._ui_call(
+            lambda: self.play_btn.setEnabled(self.audio_playback_available)
+        )
         self._ui_call(lambda: self.save_btn.setEnabled(True))
-        self._ui_call(lambda: self.seek_slider.setEnabled(True))
+        self._ui_call(
+            lambda: self.seek_slider.setEnabled(self.audio_playback_available)
+        )
         self._ui_call(lambda: self.update_time_display(0.0))
         self._ui_call(lambda: self.update_performance_display())
         self._ui_call(self._maybe_autoplay)
@@ -718,9 +729,13 @@ class TTSGuiGenerationMixin:
             )
 
         # Enable playback controls
-        self._ui_call(lambda: self.play_btn.setEnabled(True))
+        self._ui_call(
+            lambda: self.play_btn.setEnabled(self.audio_playback_available)
+        )
         self._ui_call(lambda: self.save_btn.setEnabled(True))
-        self._ui_call(lambda: self.seek_slider.setEnabled(True))
+        self._ui_call(
+            lambda: self.seek_slider.setEnabled(self.audio_playback_available)
+        )
         self._ui_call(lambda: self.update_time_display(0.0))
         self._ui_call(lambda: self.update_performance_display())
         self._ui_call(self._maybe_autoplay)

@@ -52,7 +52,6 @@ import threading
 import os
 import time
 import uuid
-import pygame
 import sherpa_onnx
 import soundfile as sf
 from pathlib import Path
@@ -75,6 +74,81 @@ import shutil
 import io
 import wave
 import struct
+from tts_gui.audio_backend import pygame, PYGAME_AVAILABLE, PYGAME_IMPORT_ERROR
+
+
+def _speaker_range(count, accent="neutral", description_prefix="Voice"):
+    return {
+        idx: {
+            "name": f"Speaker {idx}",
+            "gender": "mixed",
+            "accent": accent,
+            "description": f"{description_prefix} {idx}",
+        }
+        for idx in range(count)
+    }
+
+
+def _speaker_names(names, accent="neutral", description_prefix="Voice"):
+    return {
+        idx: {
+            "name": name,
+            "gender": "mixed",
+            "accent": accent,
+            "description": f"{description_prefix}: {name}",
+        }
+        for idx, name in enumerate(names)
+    }
+
+
+def _titleize_voice_name(value):
+    return " ".join(part.capitalize() for part in value.replace("-", " ").split())
+
+
+def _kokoro_speakers(codes):
+    locale_map = {
+        "a": "American English",
+        "b": "British English",
+        "e": "Spanish",
+        "f": "French",
+        "h": "Hindi",
+        "i": "Italian",
+        "j": "Japanese",
+        "p": "Portuguese",
+        "z": "Mandarin Chinese",
+    }
+    gender_map = {"f": "female", "m": "male"}
+
+    speakers = {}
+    for idx, code in enumerate(codes):
+        parts = code.split("_", 1)
+        prefix = parts[0]
+        raw_name = parts[1] if len(parts) > 1 else code
+        locale = locale_map.get(prefix[0], "Multilingual")
+        gender = gender_map.get(prefix[1], "mixed") if len(prefix) > 1 else "mixed"
+        speakers[idx] = {
+            "name": _titleize_voice_name(raw_name),
+            "gender": gender,
+            "accent": locale,
+            "description": f"{locale} {gender} voice ({code})",
+        }
+    return speakers
+
+
+def _kitten_speakers(names):
+    speakers = {}
+    for idx, name in enumerate(names):
+        parts = name.split("-")
+        gender = "male" if parts[-1] == "m" else "female" if parts[-1] == "f" else "mixed"
+        series = "-".join(parts[:-1])
+        speakers[idx] = {
+            "name": _titleize_voice_name(series),
+            "gender": gender,
+            "accent": "American English",
+            "description": f"American English {gender} expressive voice ({name})",
+        }
+    return speakers
+
 
 VOICE_CONFIGS = {
     "vits_piper_libritts": {
@@ -146,9 +220,9 @@ VOICE_CONFIGS = {
         "quality": "excellent",
         "description": "Crystal clear American English female voice, perfect for narration",
         "model_files": {
-            "model": "vits-piper-en_US-amy-medium/en_US-amy-medium.onnx",
-            "tokens": "vits-piper-en_US-amy-medium/tokens.txt",
-            "data_dir": "vits-piper-en_US-amy-medium/espeak-ng-data",
+            "model": "vits-piper-en_US-amy-low/en_US-amy-low.onnx",
+            "tokens": "vits-piper-en_US-amy-low/tokens.txt",
+            "data_dir": "vits-piper-en_US-amy-low/espeak-ng-data",
         },
         "speakers": {
             0: {
@@ -158,7 +232,7 @@ VOICE_CONFIGS = {
                 "description": "Crystal clear, professional female narrator",
             }
         },
-        "download_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-amy-medium.tar.bz2",
+        "download_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-amy-low.tar.bz2",
     },
     "vits_piper_lessac": {
         "name": "Lessac - Premium Female Voice",
@@ -385,12 +459,12 @@ VOICE_CONFIGS = {
         "name": "Matcha-TTS LJSpeech (Premium Female Voice)",
         "model_type": "matcha",
         "quality": "excellent",
-        "description": "State-of-the-art TTS with natural prosody and intonation",
+        "description": "Current sherpa-onnx Matcha English example using the shared Vocos vocoder",
         "model_files": {
             "acoustic_model": "matcha-icefall-en_US-ljspeech/model-steps-3.onnx",
-            "vocoder": "matcha-icefall-en_US-ljspeech/hifigan_v1.onnx",
+            "vocoder": "vocos-22khz-univ.onnx",
             "tokens": "matcha-icefall-en_US-ljspeech/tokens.txt",
-            "lexicon": "matcha-icefall-en_US-ljspeech/lexicon.txt",
+            "lexicon": "",
             "data_dir": "matcha-icefall-en_US-ljspeech/espeak-ng-data",
         },
         "speakers": {
@@ -402,6 +476,154 @@ VOICE_CONFIGS = {
             }
         },
         "download_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/matcha-icefall-en_US-ljspeech.tar.bz2",
+    },
+    "matcha_baker_zh": {
+        "name": "Matcha-TTS Baker (中文单说话人)",
+        "model_type": "matcha",
+        "quality": "excellent",
+        "description": "Current sherpa-onnx Matcha Chinese example with rule FST normalization",
+        "model_files": {
+            "acoustic_model": "matcha-icefall-zh-baker/model-steps-3.onnx",
+            "vocoder": "vocos-22khz-univ.onnx",
+            "tokens": "matcha-icefall-zh-baker/tokens.txt",
+            "lexicon": "matcha-icefall-zh-baker/lexicon.txt",
+            "data_dir": "matcha-icefall-zh-baker/espeak-ng-data",
+            "rule_fsts": "matcha-icefall-zh-baker/phone.fst,matcha-icefall-zh-baker/date.fst,matcha-icefall-zh-baker/number.fst",
+        },
+        "speakers": {
+            0: {
+                "name": "Baker",
+                "gender": "female",
+                "accent": "mandarin",
+                "description": "Single-speaker Mandarin Matcha voice",
+            }
+        },
+        "download_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/matcha-icefall-zh-baker.tar.bz2",
+    },
+    "kokoro_en_v0_19": {
+        "name": "Kokoro English v0.19 (11 Speakers)",
+        "model_type": "kokoro",
+        "quality": "excellent",
+        "description": "Natural English multi-speaker model with 11 selectable voices",
+        "model_files": {
+            "model": "kokoro-en-v0_19/model.onnx",
+            "voices": "kokoro-en-v0_19/voices.bin",
+            "tokens": "kokoro-en-v0_19/tokens.txt",
+            "data_dir": "kokoro-en-v0_19/espeak-ng-data",
+        },
+        "speakers": _kokoro_speakers(
+            [
+                "af",
+                "af_bella",
+                "af_nicole",
+                "af_sarah",
+                "af_sky",
+                "am_adam",
+                "am_michael",
+                "bf_emma",
+                "bf_isabella",
+                "bm_george",
+                "bm_lewis",
+            ]
+        ),
+        "download_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2",
+    },
+    "kokoro_multi_lang_v1_0": {
+        "name": "Kokoro Multi-Language v1.0 (53 Speakers)",
+        "model_type": "kokoro",
+        "quality": "excellent",
+        "description": "Current sherpa-onnx multilingual Kokoro example for English and Chinese",
+        "model_files": {
+            "model": "kokoro-multi-lang-v1_0/model.onnx",
+            "voices": "kokoro-multi-lang-v1_0/voices.bin",
+            "tokens": "kokoro-multi-lang-v1_0/tokens.txt",
+            "data_dir": "kokoro-multi-lang-v1_0/espeak-ng-data",
+            "lexicon": "kokoro-multi-lang-v1_0/lexicon-us-en.txt,kokoro-multi-lang-v1_0/lexicon-zh.txt",
+            "dict_dir": "kokoro-multi-lang-v1_0/dict",
+        },
+        "speakers": _kokoro_speakers(
+            [
+                "af_alloy",
+                "af_aoede",
+                "af_bella",
+                "af_heart",
+                "af_jessica",
+                "af_kore",
+                "af_nicole",
+                "af_nova",
+                "af_river",
+                "af_sarah",
+                "af_sky",
+                "am_adam",
+                "am_echo",
+                "am_eric",
+                "am_fenrir",
+                "am_liam",
+                "am_michael",
+                "am_onyx",
+                "am_puck",
+                "am_santa",
+                "bf_alice",
+                "bf_emma",
+                "bf_isabella",
+                "bf_lily",
+                "bm_daniel",
+                "bm_fable",
+                "bm_george",
+                "bm_lewis",
+                "ef_dora",
+                "em_alex",
+                "ff_siwis",
+                "hf_alpha",
+                "hf_beta",
+                "hm_omega",
+                "hm_psi",
+                "if_sara",
+                "im_nicola",
+                "jf_alpha",
+                "jf_gongitsune",
+                "jf_nezumi",
+                "jf_tebukuro",
+                "jm_kumo",
+                "pf_dora",
+                "pm_alex",
+                "pm_santa",
+                "zf_xiaobei",
+                "zf_xiaoni",
+                "zf_xiaoxiao",
+                "zf_xiaoyi",
+                "zm_yunjian",
+                "zm_yunxi",
+                "zm_yunxia",
+                "zm_yunyang",
+            ]
+        ),
+        "download_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2",
+    },
+    "kitten_nano_en_v0_1_fp16": {
+        "name": "Kitten Nano English v0.1 FP16 (8 Speakers)",
+        "model_type": "kitten",
+        "quality": "excellent",
+        "description": "Current sherpa-onnx Kitten TTS English example",
+        "model_files": {
+            "model": "kitten-nano-en-v0_1-fp16/model.fp16.onnx",
+            "voices": "kitten-nano-en-v0_1-fp16/voices.bin",
+            "tokens": "kitten-nano-en-v0_1-fp16/tokens.txt",
+            "data_dir": "kitten-nano-en-v0_1-fp16/espeak-ng-data",
+        },
+        "speakers": _kitten_speakers(
+            [
+                "expr-voice-2-m",
+                "expr-voice-2-f",
+                "expr-voice-3-m",
+                "expr-voice-3-f",
+                "expr-voice-4-m",
+                "expr-voice-4-f",
+                "expr-voice-5-m",
+                "expr-voice-5-f",
+            ]
+        ),
+        "download_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kitten-nano-en-v0_1-fp16.tar.bz2",
     },
     "vits_glados": {
         "name": "GLaDOS - AI Character Voice",

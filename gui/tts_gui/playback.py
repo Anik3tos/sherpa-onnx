@@ -6,13 +6,20 @@ Audio playback mixin for the TTS GUI using PySide6 (Qt).
 import os
 import time
 import numpy as np
-import pygame
 
 from tts_gui.common import QTimer, QTextCursor, QTextCharFormat, QColor
+from tts_gui.audio_backend import QMediaPlayer, QUrl, pygame
 
 
 class TTSGuiPlaybackMixin:
     """Mixin class providing audio playback functionality."""
+
+    def _using_qt_audio(self):
+        return (
+            getattr(self, "audio_backend_name", "none") == "qt"
+            and getattr(self, "qt_media_player", None) is not None
+            and getattr(self, "qt_audio_output", None) is not None
+        )
 
     def update_follow_along_highlight(self, current_time):
         """Update the word highlighting based on current playback time"""
@@ -213,8 +220,39 @@ class TTSGuiPlaybackMixin:
 
     def play_audio(self):
         """Play generated audio with enhanced controls"""
+        if not getattr(self, "audio_playback_available", False):
+            self.log_status(
+                "⚠ Audio playback is unavailable. Enable either pygame or Qt multimedia to use playback."
+            )
+            return
+
         if self.current_audio_file and os.path.exists(self.current_audio_file):
             try:
+                if self._using_qt_audio():
+                    volume = self.volume_var / 100.0
+                    speed_factor = self.playback_speed_var
+
+                    self.qt_audio_output.setVolume(volume)
+                    self.qt_media_player.setPlaybackRate(speed_factor)
+                    self.qt_media_player.setSource(
+                        QUrl.fromLocalFile(os.path.abspath(self.current_audio_file))
+                    )
+                    if self.pause_position > 0:
+                        self.qt_media_player.setPosition(
+                            int(self.pause_position * 1000)
+                        )
+                    self.current_sound = self.qt_media_player
+                    self.current_sound.play()
+                    self.is_playing = True
+                    self.is_paused = False
+                    self.playback_start_time = time.time()
+
+                    self.log_status("▶ Playing audio...")
+                    self.play_btn.setEnabled(False)
+                    self.stop_btn.setEnabled(True)
+                    self.monitor_playback()
+                    return
+
                 # Stop any currently playing audio
                 if self.current_sound:
                     self.current_sound.stop()
@@ -329,6 +367,21 @@ class TTSGuiPlaybackMixin:
     def monitor_playback(self):
         """Monitor audio playback status with enhanced controls"""
         if self.is_playing and self.current_sound:
+            if self._using_qt_audio():
+                if (
+                    self.qt_media_player.playbackState()
+                    == QMediaPlayer.PlaybackState.PlayingState
+                ):
+                    current_time = self.qt_media_player.position() / 1000.0
+                    self.update_time_display(current_time)
+                    self.update_follow_along_highlight(current_time)
+                    QTimer.singleShot(50, self.monitor_playback)
+                else:
+                    current_time = self.qt_media_player.position() / 1000.0
+                    if current_time >= max(0.0, self.audio_duration - 0.1):
+                        self.playback_finished()
+                return
+
             # Check if sound is still playing
             if pygame.mixer.get_busy():
                 # Update time display and seek bar
@@ -352,6 +405,9 @@ class TTSGuiPlaybackMixin:
 
     def playback_finished(self):
         """Handle playback completion"""
+        if self._using_qt_audio():
+            self.qt_media_player.stop()
+
         self.is_playing = False
         self.is_paused = False
         self.pause_position = 0.0
@@ -363,6 +419,27 @@ class TTSGuiPlaybackMixin:
 
     def stop_audio(self):
         """Stop audio playback"""
+        if not getattr(self, "audio_playback_available", False):
+            return
+
+        if self._using_qt_audio():
+            if self.current_sound:
+                self.current_sound.pause()
+
+            if self.is_playing:
+                self.pause_position = min(
+                    self.qt_media_player.position() / 1000.0,
+                    self.audio_duration,
+                )
+
+            self.is_playing = False
+            self.is_paused = True
+            self.play_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            self.update_time_display()
+            self.log_status("⏸ Playback paused")
+            return
+
         if self.current_sound:
             self.current_sound.stop()
 

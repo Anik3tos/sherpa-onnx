@@ -3,11 +3,63 @@
 Voice management mixin for the TTS GUI using PySide6 (Qt).
 """
 
+import tarfile
+from pathlib import Path
+
 from tts_gui.common import VOICE_CONFIGS, sherpa_onnx, os, threading, QMessageBox
 
 
 class TTSGuiVoiceMixin:
     """Mixin class providing voice model management functionality."""
+
+    def _path_exists(self, file_path, is_dir=False):
+        if not file_path:
+            return False
+
+        paths = [p.strip() for p in str(file_path).split(",") if p.strip()]
+        if not paths:
+            return False
+
+        checker = os.path.isdir if is_dir else os.path.isfile
+        return all(checker(path) for path in paths)
+
+    def _voice_model_roots_from_configs(self):
+        roots = set()
+        for config in VOICE_CONFIGS.values():
+            for file_path in config.get("model_files", {}).values():
+                normalized = str(file_path).replace("\\", "/")
+                if "/" in normalized:
+                    roots.add(normalized.split("/", 1)[0])
+        return roots
+
+    def _extract_tts_archives(self):
+        """Extract bundled TTS archives so the GUI can discover their folders."""
+        repo_root = Path(__file__).resolve().parents[2]
+        known_roots = self._voice_model_roots_from_configs()
+
+        for archive in sorted(repo_root.glob("*.tar.bz2")):
+            archive_name = archive.name[:-8]
+            if archive_name not in known_roots:
+                continue
+
+            target_dir = repo_root / archive_name
+            if target_dir.is_dir():
+                continue
+
+            try:
+                self.log_status(f"📦 Extracting bundled model archive: {archive.name}")
+                with tarfile.open(archive, "r:bz2") as tar:
+                    members = tar.getmembers()
+                    for member in members:
+                        member_path = (repo_root / member.name).resolve()
+                        if repo_root not in member_path.parents and member_path != repo_root:
+                            raise ValueError(
+                                f"Archive contains an invalid path: {member.name}"
+                            )
+                    tar.extractall(repo_root)
+                self.log_status(f"✓ Extracted {archive_name}")
+            except Exception as e:
+                self.log_status(f"✗ Failed to extract {archive.name}: {e}")
 
     def detect_available_providers(self):
         """Detect available ONNX Runtime providers."""
@@ -86,6 +138,7 @@ class TTSGuiVoiceMixin:
 
     def check_available_voices(self):
         """Check which voice models are available on the system."""
+        self._extract_tts_archives()
         self.available_voice_configs = {}
 
         for config_id, config in VOICE_CONFIGS.items():
@@ -95,6 +148,8 @@ class TTSGuiVoiceMixin:
 
             # Check if required model files exist
             if config["model_type"] == "kokoro":
+                required_files = ["model", "voices", "tokens", "data_dir"]
+            elif config["model_type"] == "kitten":
                 required_files = ["model", "voices", "tokens", "data_dir"]
             elif config["model_type"] == "matcha":
                 if not os.path.isfile(model_files.get("vocoder", "")):
@@ -109,16 +164,20 @@ class TTSGuiVoiceMixin:
             else:
                 continue
 
+            for optional_file_key in ("rule_fsts", "rule_fars"):
+                if model_files.get(optional_file_key):
+                    required_files.append(optional_file_key)
+
             for file_key in required_files:
                 if file_key in model_files:
                     file_path = model_files[file_key]
                     if file_key.endswith("_dir"):
-                        if not os.path.isdir(file_path):
+                        if not self._path_exists(file_path, is_dir=True):
                             missing_files.append(file_path)
                             available = False
                             break
                     else:
-                        if not os.path.isfile(file_path):
+                        if not self._path_exists(file_path):
                             missing_files.append(file_path)
                             available = False
                             break
@@ -329,6 +388,8 @@ class TTSGuiVoiceMixin:
                         debug=False,
                         provider=self.get_provider(),
                     ),
+                    rule_fsts=model_files.get("rule_fsts", ""),
+                    rule_fars=model_files.get("rule_fars", ""),
                     max_num_sentences=1,
                 )
 
@@ -359,6 +420,8 @@ class TTSGuiVoiceMixin:
                             debug=False,
                             provider=self.get_provider(),
                         ),
+                        rule_fsts=model_files.get("rule_fsts", ""),
+                        rule_fars=model_files.get("rule_fars", ""),
                         max_num_sentences=1,
                     )
                 except Exception as kokoro_error:
@@ -380,6 +443,8 @@ class TTSGuiVoiceMixin:
                                 debug=False,
                                 provider=self.get_provider(),
                             ),
+                            rule_fsts=model_files.get("rule_fsts", ""),
+                            rule_fars=model_files.get("rule_fars", ""),
                             max_num_sentences=1,
                         )
                         self.log_status(
@@ -402,6 +467,26 @@ class TTSGuiVoiceMixin:
                         debug=False,
                         provider=self.get_provider(),
                     ),
+                    rule_fsts=model_files.get("rule_fsts", ""),
+                    rule_fars=model_files.get("rule_fars", ""),
+                    max_num_sentences=1,
+                )
+            elif config["model_type"] == "kitten":
+                tts_config = sherpa_onnx.OfflineTtsConfig(
+                    model=sherpa_onnx.OfflineTtsModelConfig(
+                        kitten=sherpa_onnx.OfflineTtsKittenModelConfig(
+                            model=model_files["model"],
+                            voices=model_files["voices"],
+                            tokens=model_files["tokens"],
+                            data_dir=model_files["data_dir"],
+                            length_scale=1.0,
+                        ),
+                        num_threads=2,
+                        debug=False,
+                        provider=self.get_provider(),
+                    ),
+                    rule_fsts=model_files.get("rule_fsts", ""),
+                    rule_fars=model_files.get("rule_fars", ""),
                     max_num_sentences=1,
                 )
             else:
